@@ -16,4 +16,6 @@ void* alc_alloc(Allocator*, size_t);
 void* alc_realloc(Allocator*, void*, size_t);
 void  alc_free(Allocator*, void*);
 
+/* ---------------- */
+
 #endif

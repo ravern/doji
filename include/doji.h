@@ -1,7 +1,6 @@
 #ifndef __doji_h
 #define __doji_h
 
-#include <assert.h>
 #include <setjmp.h>
 #include <stdbool.h>
 #include <stdint.h>

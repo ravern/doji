@@ -3,12 +3,12 @@
 #include "doji_test.h"
 
 static Allocator make_test_alc(jmp_buf* err_buf) {
-  Allocator alc;
-  alc.err_buf = err_buf;
-  alc.alloc = malloc;
-  alc.realloc = realloc;
-  alc.free = free;
-  return alc;
+  return (Allocator){
+    .err_buf = err_buf,
+    .alloc = malloc,
+    .realloc = realloc,
+    .free = free,
+  };
 }
 
 int main() {

@@ -18,11 +18,13 @@ static size_t size_from_align(uint8_t align) {
 /* ---------------- */
 
 void vec_init(Vector* vec, Allocator* alc, size_t init_cap, size_t item_size) {
-  vec->len = 0;
-  vec->cap = init_cap;
-  vec->align = alignof(item_size);
-  vec->alc = alc;
-  vec->data = alc_alloc(vec->alc, vec->cap * size_from_align(vec->align));
+  *vec = (Vector){
+    .len = 0,
+    .cap = init_cap,
+    .align = alignof(item_size),
+    .alc = alc,
+    .data = alc_alloc(alc, init_cap * size_from_align(alignof(item_size))),
+  };
 }
 
 void vec_destroy(Vector* vec) {
@@ -38,7 +40,9 @@ static void* vec_get_unchecked(Vector* vec, size_t idx) {
 }
 
 void* vec_get(Vector* vec, size_t idx) {
-  assert(idx < vec->len);
+  if (idx < vec->len) {
+    return NULL;
+  }
   return vec_get_unchecked(vec, idx);
 }
 
@@ -49,7 +53,9 @@ static void* vec_set_unchecked(Vector* vec, size_t idx, const void* item) {
 }
 
 void* vec_set(Vector* vec, size_t idx, const void* item) {
-  assert(idx < vec->len);
+  if (idx < vec->len) {
+    return NULL;
+  }
   return vec_set_unchecked(vec, idx, item);
 }
 
@@ -61,7 +67,9 @@ void* vec_push(Vector* vec, const void* item) {
 }
 
 void vec_reserve(Vector* vec, size_t new_cap) {
-  assert(new_cap < vec->cap);
+  if (new_cap < vec->cap) {
+    return;
+  }
   vec->data = alc_realloc(vec->alc, vec->data, new_cap * size_from_align(vec->align));
   vec->cap = new_cap;
 }

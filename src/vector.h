@@ -24,4 +24,6 @@ void   vec_reserve(Vector*, size_t new_cap);
 void   vec_clear(Vector*);
 void   vec_destroy(Vector*);
 
+/* ---------------- */
+
 #endif
