@@ -6,7 +6,7 @@
 
 void* alc_alloc(Allocator* alc, size_t size) {
   void* data = alc->alloc(size);
-  if (data == NULL) {
+  if (!data) {
     longjmp(*alc->err_buf, 1);
   }
   return data;
@@ -14,7 +14,7 @@ void* alc_alloc(Allocator* alc, size_t size) {
 
 void* alc_realloc(Allocator* alc, void* data, size_t size) {
   void* new_data = alc->realloc(data, size);
-  if (new_data == NULL) {
+  if (!new_data) {
     alc_free(alc, data);
     longjmp(*alc->err_buf, 1);
   }

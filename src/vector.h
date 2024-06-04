@@ -16,13 +16,13 @@ typedef struct Vector {
 } Vector;
 
 void   vec_init(Vector*, Allocator*, size_t init_cap, size_t item_size);
+void   vec_destroy(Vector*);
 size_t vec_len(Vector*);
 void*  vec_get(Vector*, size_t idx);
 void*  vec_set(Vector*, size_t idx, void const*);
 void*  vec_push(Vector*, void const*);
 void   vec_reserve(Vector*, size_t new_cap);
 void   vec_clear(Vector*);
-void   vec_destroy(Vector*);
 
 /* ---------------- */
 
