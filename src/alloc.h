@@ -5,16 +5,22 @@
 
 /* ---------------- */
 
+typedef void* (*AllocFn)(void* state, size_t);
+typedef void* (*ReallocFn)(void* state, void*, size_t);
+typedef void (*FreeFn)(void* state, void*);
+
 typedef struct Allocator {
-  jmp_buf* err_buf;
-  void* (*alloc)(size_t);
-  void* (*realloc)(void*, size_t);
-  void (*free)(void*);
+  void*     state;
+  jmp_buf*  err_buf;
+  AllocFn   alloc;
+  ReallocFn realloc;
+  FreeFn    free;
 } Allocator;
 
-void* alc_alloc(Allocator*, size_t);
-void* alc_realloc(Allocator*, void*, size_t);
-void  alc_free(Allocator*, void*);
+void  alc_init(Allocator*, void* state, jmp_buf* err_buf, AllocFn, ReallocFn, FreeFn);
+void* alc_alloc(Allocator const*, size_t);
+void* alc_realloc(Allocator const*, void*, size_t);
+void  alc_free(Allocator const*, void*);
 
 /* ---------------- */
 

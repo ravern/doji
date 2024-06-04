@@ -2,12 +2,25 @@
 
 #include "doji_test.h"
 
+void* std_alloc(void* state, size_t size) {
+  return malloc(size);
+}
+
+void* std_realloc(void* state, void* data, size_t size) {
+  return realloc(data, size);
+}
+
+void std_free(void* state, void* data) {
+  free(data);
+}
+
 static Allocator make_std_alc(jmp_buf* err_buf) {
   return (Allocator){
+    .state = NULL,
     .err_buf = err_buf,
-    .alloc = malloc,
-    .realloc = realloc,
-    .free = free,
+    .alloc = std_alloc,
+    .realloc = std_realloc,
+    .free = std_free,
   };
 }
 

@@ -23,7 +23,7 @@ typedef struct doji_Context {
 typedef struct doji_Value doji_Value;
 
 void       doji_init(doji_Context*);
-doji_Value doji_evaluate(doji_Context*, const char* code);
+doji_Value doji_evaluate(doji_Context*, char const* code);
 void       doji_destroy(doji_Context*);
 
 /* ---------------- */

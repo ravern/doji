@@ -24,16 +24,17 @@ struct GcObject {
 /* ---------------- */
 
 typedef struct GcState {
-  Allocator*  alc;
-  doji_Fiber* root;
-  GcObject*   objs;
+  Allocator const* alc;
+  Allocator        gc_alc;
+  doji_Fiber*      root;
+  GcObject*        objs;
 } GcState;
 
-void      gc_init(GcState*, Allocator*);
-void      gc_destroy(GcState*);
-void      gc_set_root(GcState*, doji_Fiber*);
-GcObject* gc_alloc(GcState*, size_t size);
-void      gc_collect(GcState*);
+void             gc_init(GcState*, Allocator const*);
+void             gc_destroy(GcState*);
+void             gc_set_root(GcState*, doji_Fiber*);
+Allocator const* gc_alc(GcState*);
+void             gc_collect(GcState*);
 
 /* ---------------- */
 
