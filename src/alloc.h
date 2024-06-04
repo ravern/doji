@@ -6,7 +6,7 @@
 /* ---------------- */
 
 typedef struct Allocator {
-  jmp_buf err;
+  jmp_buf* err_buf;
   void* (*alloc)(size_t);
   void* (*realloc)(void*, size_t);
   void (*free)(void*);

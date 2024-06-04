@@ -15,12 +15,18 @@ static size_t size_from_align(uint8_t align) {
   return offset_from_align(1, align);
 }
 
+/* ---------------- */
+
 void vec_init(Vector* vec, Allocator* alc, size_t init_cap, size_t item_size) {
   vec->len = 0;
   vec->cap = init_cap;
   vec->align = alignof(item_size);
   vec->alc = alc;
-  vec->data = malloc(init_cap * size_from_align(vec->align));
+  vec->data = alc_alloc(vec->alc, vec->cap * size_from_align(vec->align));
+}
+
+void vec_destroy(Vector* vec) {
+  alc_free(vec->alc, vec->data);
 }
 
 size_t vec_len(Vector* vec) {
@@ -56,6 +62,6 @@ void* vec_push(Vector* vec, const void* item) {
 
 void vec_reserve(Vector* vec, size_t new_cap) {
   assert(new_cap < vec->cap);
-  vec->data = realloc(vec->data, new_cap * size_from_align(vec->align));
+  vec->data = alc_realloc(vec->alc, vec->data, new_cap * size_from_align(vec->align));
   vec->cap = new_cap;
 }
