@@ -6,7 +6,7 @@
 
 #include "../src/vector.h"
 
-void test_vector(Allocator* alc) {
+void test_vector(Allocator const* alc) {
   Vector vec;
   vec_init(&vec, alc, 4, sizeof(int64_t));
 

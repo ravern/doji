@@ -40,7 +40,7 @@ static void* vec_get_unchecked(Vector const* vec, size_t idx) {
 }
 
 void const* vec_get(Vector const* vec, size_t idx) {
-  if (idx < vec->len) {
+  if (idx >= vec->len) {
     return NULL;
   }
   return vec_get_unchecked(vec, idx);
@@ -53,7 +53,7 @@ static void* vec_set_unchecked(Vector* vec, size_t idx, void const* item) {
 }
 
 void const* vec_set(Vector* vec, size_t idx, void const* item) {
-  if (idx < vec->len) {
+  if (idx >= vec->len) {
     return NULL;
   }
   return vec_set_unchecked(vec, idx, item);
