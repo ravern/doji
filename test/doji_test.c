@@ -2,6 +2,8 @@
 
 #include "doji_test.h"
 
+#include "../src/lex.h"
+
 void* std_alloc(void* state, size_t size) {
   return malloc(size);
 }
@@ -37,6 +39,14 @@ int main() {
 
   test_vector(&alc);
   test_lex(&alc);
+
+  Lexer lex;
+  lex_init(&lex, &alc, "<<memory>>", "13143 qwfaf343 3434j");
+  lex_next(&lex);
+  lex_next(&lex);
+  lex_next(&lex);
+  printf("%s\n", err_str(lex.err, &alc));
+  lex_destroy(&lex);
 
   return 0;
 }

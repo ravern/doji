@@ -22,40 +22,40 @@ char const* tok_type_str(TokType type, Allocator* alc) {
   case TOK_IF:         return "if";
   case TOK_FOR:        return "for";
   case TOK_WHILE:      return "while";
-  case TOK_L_PAREN:    return "(";
-  case TOK_R_PAREN:    return ")";
-  case TOK_L_BRACE:    return "{";
-  case TOK_R_BRACE:    return "}";
-  case TOK_L_BRACKET:  return "[";
-  case TOK_R_BRACKET:  return "]";
-  case TOK_SEMICOLON:  return ";";
-  case TOK_COLON:      return ":";
-  case TOK_PERIOD:     return ".";
-  case TOK_COMMA:      return ",";
-  case TOK_PLUS:       return "+";
-  case TOK_PLUS_EQ:    return "+=";
-  case TOK_HYPHEN:     return "-";
-  case TOK_HYPHEN_EQ:  return "-=";
-  case TOK_STAR:       return "*";
-  case TOK_STAR_EQ:    return "*=";
-  case TOK_SLASH:      return "/";
-  case TOK_SLASH_EQ:   return "/=";
-  case TOK_PERCENT:    return "%";
-  case TOK_PERCENT_EQ: return "%=";
-  case TOK_EQ:         return "=";
-  case TOK_EQ_EQ:      return "==";
-  case TOK_GT:         return ">";
-  case TOK_GT_EQ:      return ">=";
-  case TOK_LT:         return "<";
-  case TOK_LT_EQ:      return "<=";
-  case TOK_BANG:       return "!";
-  case TOK_BANG_EQ:    return "!=";
-  case TOK_AND:        return "&&";
-  case TOK_OR:         return "||";
-  case TOK_BAND:       return "&";
-  case TOK_BOR:        return "|";
-  case TOK_BNOT:       return "~";
-  case TOK_EOF:        return "EOF";
+  case TOK_L_PAREN:    return "'('";
+  case TOK_R_PAREN:    return "')'";
+  case TOK_L_BRACE:    return "'{'";
+  case TOK_R_BRACE:    return "'}'";
+  case TOK_L_BRACKET:  return "'['";
+  case TOK_R_BRACKET:  return "']'";
+  case TOK_SEMICOLON:  return "';'";
+  case TOK_COLON:      return "':'";
+  case TOK_PERIOD:     return "'.'";
+  case TOK_COMMA:      return "','";
+  case TOK_PLUS:       return "'+'";
+  case TOK_PLUS_EQ:    return "'+='";
+  case TOK_HYPHEN:     return "'-'";
+  case TOK_HYPHEN_EQ:  return "'-='";
+  case TOK_STAR:       return "'*'";
+  case TOK_STAR_EQ:    return "'*='";
+  case TOK_SLASH:      return "'/'";
+  case TOK_SLASH_EQ:   return "'/='";
+  case TOK_PERCENT:    return "'%'";
+  case TOK_PERCENT_EQ: return "'%='";
+  case TOK_EQ:         return "'='";
+  case TOK_EQ_EQ:      return "'=='";
+  case TOK_GT:         return "'>'";
+  case TOK_GT_EQ:      return "'>='";
+  case TOK_LT:         return "'<'";
+  case TOK_LT_EQ:      return "'<='";
+  case TOK_BANG:       return "'!'";
+  case TOK_BANG_EQ:    return "'!='";
+  case TOK_AND:        return "'&&'";
+  case TOK_OR:         return "'||'";
+  case TOK_BAND:       return "'&'";
+  case TOK_BOR:        return "'|'";
+  case TOK_BNOT:       return "'~'";
+  case TOK_EOF:        return "end of file";
   }
 }
 
@@ -104,9 +104,11 @@ static void lex_init_err(Lexer* lex, char u, char const* e) {
   strb_init(&strb, lex->alc, 0);
   strb_push_str(&strb, "unexpected char '");
   strb_push(&strb, u);
-  strb_push_str(&strb, "', expected '");
-  strb_push_str(&strb, e);
   strb_push(&strb, '\'');
+  if (e) {
+    strb_push_str(&strb, ", expected ");
+    strb_push_str(&strb, e);
+  }
   char* msg = strb_build(&strb);
 
   if (lex->err) {
@@ -185,22 +187,23 @@ static Tok lex_build_num_tok(Lexer* lex) {
     }
   }
 
+  char c = lex_peek(lex);
+  if (is_alpha(c)) {
+    lex_init_err(lex, c, "digit");
+    return (Tok){0};
+  }
+
   return lex_build_tok(lex, is_float ? TOK_FLOAT : TOK_INT);
 }
 
 static Tok lex_build_ident_tok(Lexer* lex) {
-  char c = lex_peek(lex);
   for (char c = lex_peek(lex); is_alnum(c) || c == '_'; c = lex_peek(lex)) {
     lex_advance(lex);
   }
 
-  size_t start = lex->cur_span.start;
-  size_t len = lex->cur_span.len;
-
-#define DOJI_LEX_CHECK_KEYWORD(kw, t)                         \
-  if (lex->cur_span.len == (sizeof(kw) - 1) / sizeof(char) && \
-      strncmp(lex->src + start, kw, len) == 0) {              \
-    return lex_build_tok(lex, t);                             \
+#define DOJI_LEX_CHECK_KEYWORD(kw, t)                                        \
+  if (strncmp(&lex->src[lex->cur_span.start], kw, lex->cur_span.len) == 0) { \
+    return lex_build_tok(lex, t);                                            \
   }
 
   DOJI_LEX_CHECK_KEYWORD("nil", TOK_NIL);
@@ -236,7 +239,6 @@ Tok lex_next(Lexer* lex) {
   }
 
   switch (c) {
-    DOJI_LEX_CASE_SINGLE('\0', TOK_EOF);
     DOJI_LEX_CASE_SINGLE('(', TOK_L_PAREN);
     DOJI_LEX_CASE_SINGLE(')', TOK_R_PAREN);
     DOJI_LEX_CASE_SINGLE('{', TOK_L_BRACE);
@@ -259,6 +261,9 @@ Tok lex_next(Lexer* lex) {
     DOJI_LEX_CASE_DOUBLE('&', '&', TOK_BAND, TOK_AND);
     DOJI_LEX_CASE_DOUBLE('|', '|', TOK_BOR, TOK_OR);
     DOJI_LEX_CASE_SINGLE('~', TOK_BNOT);
+  case '\0': {
+    return lex_build_tok(lex, TOK_EOF);
+  }
   default: {
     if (is_digit(c)) {
       return lex_build_num_tok(lex);

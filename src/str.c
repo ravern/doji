@@ -15,15 +15,15 @@ void strb_init(StrBuilder* strb, Allocator* alc, size_t init_cap) {
   Vector str;
   vec_init(&str, alc, actual_init_cap, sizeof(char));
 
-  *strb = (StrBuilder){.str = &str};
+  *strb = (StrBuilder){.str = str};
 }
 
 void strb_destroy(StrBuilder* strb) {
-  vec_destroy(strb->str);
+  vec_destroy(&strb->str);
 }
 
 void strb_push(StrBuilder* strb, char c) {
-  vec_push(strb->str, &c);
+  vec_push(&strb->str, &c);
 }
 
 void strb_push_str(StrBuilder* strb, char const* str) {
@@ -50,5 +50,5 @@ void strb_push_int64(StrBuilder* strb, int64_t i) {
 
 char* strb_build(StrBuilder* strb) {
   strb_push(strb, '\0');
-  return (char*)vec_get(strb->str, 0);
+  return (char*)vec_get(&strb->str, 0);
 }

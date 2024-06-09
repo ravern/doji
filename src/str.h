@@ -9,7 +9,7 @@
 /* ---------------- */
 
 typedef struct StrBuilder {
-  Vector* str;
+  Vector str;
 } StrBuilder;
 
 void  strb_init(StrBuilder*, Allocator*, size_t init_cap);
