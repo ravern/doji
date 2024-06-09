@@ -10,21 +10,18 @@
 
 /* ---------------- */
 
-typedef struct doji_Fiber  doji_Fiber;
-typedef struct doji_Global doji_Global;
-typedef struct doji_Error  doji_Error;
-
-typedef struct doji_Context {
-  doji_Fiber*  fiber;
-  doji_Global* global;
-  doji_Error*  err;
-} doji_Context;
-
 typedef struct doji_Value doji_Value;
 
-void       doji_init(doji_Context*);
-doji_Value doji_evaluate(doji_Context*, char const* code);
-void       doji_destroy(doji_Context*);
+/* ---------------- */
+
+typedef struct doji_Context doji_Context;
+
+typedef struct doji_Error doji_Error;
+
+void        doji_init(doji_Context*);
+void        doji_destroy(doji_Context*);
+doji_Value  doji_eval(doji_Context*, char const* src);
+doji_Error* doji_err(doji_Context*);
 
 /* ---------------- */
 

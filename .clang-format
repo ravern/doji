@@ -1,4 +1,6 @@
 AlignAfterOpenBracket: AlwaysBreak
+AlignConsecutiveAssignments:
+  Enabled: false
 AlignConsecutiveDeclarations:
   Enabled: true
   AcrossComments: true
@@ -7,9 +9,15 @@ AlignConsecutiveMacros:
   Enabled: true
   AcrossComments: true
   AcrossEmptyLines: false
+AlignConsecutiveShortCaseStatements:
+  Enabled: true
+  AcrossComments: true
+  AcrossEmptyLines: false
 AlignEscapedNewlines: Left
+AllowShortCaseLabelsOnASingleLine: true
 AllowShortFunctionsOnASingleLine: Empty
-ContinuationIndentWidth: 2
+BracedInitializerIndentWidth: 2
+ContinuationIndentWidth: 4
 ColumnLimit: 100
 TabWidth: 2
 PointerAlignment: Left

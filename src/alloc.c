@@ -5,7 +5,7 @@
 /* ---------------- */
 
 void alc_init(
-  Allocator* alc, void* state, jmp_buf* err_buf, AllocFn alloc, ReallocFn realloc, FreeFn free) {
+    Allocator* alc, void* state, jmp_buf* err_buf, AllocFn alloc, ReallocFn realloc, FreeFn free) {
   *alc = (Allocator){
     .err_buf = err_buf,
     .state = state,

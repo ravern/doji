@@ -7,6 +7,11 @@
 
 /* ---------------- */
 
+#define DOJI_VEC_DEFAULT_INIT_CAP 4
+#define DOJI_VEC_GROW_FACTOR      2
+
+/* ---------------- */
+
 static size_t offset_from_align(size_t idx, uint8_t align) {
   return idx << align;
 }
@@ -18,12 +23,14 @@ static size_t size_from_align(uint8_t align) {
 /* ---------------- */
 
 void vec_init(Vector* vec, Allocator const* alc, size_t init_cap, size_t item_size) {
+  size_t actual_init_cap = init_cap != 0 ? init_cap : DOJI_VEC_DEFAULT_INIT_CAP;
+
   *vec = (Vector){
     .len = 0,
-    .cap = init_cap,
+    .cap = actual_init_cap,
     .align = alignof(item_size),
     .alc = alc,
-    .data = alc_alloc(alc, init_cap * size_from_align(alignof(item_size))),
+    .data = alc_alloc(alc, actual_init_cap * size_from_align(alignof(item_size))),
   };
 }
 
@@ -61,7 +68,7 @@ void const* vec_set(Vector* vec, size_t idx, void const* item) {
 
 void const* vec_push(Vector* vec, void const* item) {
   if (vec->len == vec->cap) {
-    vec_reserve(vec, vec->cap * 2);
+    vec_reserve(vec, vec->cap * DOJI_VEC_GROW_FACTOR);
   }
   return vec_set_unchecked(vec, vec->len++, item);
 }
