@@ -1,12 +1,11 @@
 
-#include <stdint.h>
 #define __doji_vector_test_c
 
 #include "doji_test.h"
 
 #include "../src/vector.h"
 
-void test_vector(Allocator const* alc) {
+void test_vector(Allocator* alc) {
   Vector vec;
   vec_init(&vec, alc, 4, sizeof(int64_t));
 

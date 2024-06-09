@@ -18,9 +18,9 @@ typedef struct Allocator {
 } Allocator;
 
 void  alc_init(Allocator*, void* state, jmp_buf* err_buf, AllocFn, ReallocFn, FreeFn);
-void* alc_alloc(Allocator const*, size_t);
-void* alc_realloc(Allocator const*, void*, size_t);
-void  alc_free(Allocator const*, void*);
+void* alc_alloc(Allocator*, size_t);
+void* alc_realloc(Allocator*, void*, size_t);
+void  alc_free(Allocator*, void*);
 
 /* ---------------- */
 

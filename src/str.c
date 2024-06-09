@@ -9,7 +9,7 @@
 
 /* ---------------- */
 
-void strb_init(StrBuilder* strb, Allocator const* alc, size_t init_cap) {
+void strb_init(StrBuilder* strb, Allocator* alc, size_t init_cap) {
   size_t actual_init_cap = init_cap != 0 ? init_cap : DOJI_STRB_DEFAULT_INIT_CAP;
 
   Vector str;
@@ -48,7 +48,7 @@ void strb_push_int64(StrBuilder* strb, int64_t i) {
   }
 }
 
-char const* strb_build(StrBuilder* strb) {
+char* strb_build(StrBuilder* strb) {
   strb_push(strb, '\0');
-  return (char const*)vec_get(strb->str, 0);
+  return (char*)vec_get(strb->str, 0);
 }

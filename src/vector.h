@@ -8,14 +8,14 @@
 /* ---------------- */
 
 typedef struct Vector {
-  size_t           len;
-  size_t           cap;
-  uint8_t          align;
-  Allocator const* alc;
-  uint8_t*         data;
+  size_t     len;
+  size_t     cap;
+  uint8_t    align;
+  Allocator* alc;
+  uint8_t*   data;
 } Vector;
 
-void        vec_init(Vector*, Allocator const*, size_t init_cap, size_t item_size);
+void        vec_init(Vector*, Allocator*, size_t init_cap, size_t item_size);
 void        vec_destroy(Vector*);
 size_t      vec_len(Vector const*);
 void const* vec_get(Vector const*, size_t idx);

@@ -36,6 +36,7 @@ int main() {
   }
 
   test_vector(&alc);
+  test_lex(&alc);
 
   return 0;
 }

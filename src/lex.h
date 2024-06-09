@@ -61,7 +61,7 @@ typedef enum TokType {
 } TokType;
 
 void        tok_type_display(TokType, StrBuilder*);
-char const* tok_type_str(TokType, Allocator const*);
+char const* tok_type_str(TokType, Allocator*);
 
 typedef struct Tok {
   Span    span;
@@ -71,14 +71,14 @@ typedef struct Tok {
 /* ---------------- */
 
 typedef struct Lexer {
-  char const*      src;
-  Loc              cur_loc;
-  Span             cur_span;
-  Allocator const* alc;
-  doji_Error*      err;
+  char const* src;
+  Loc         cur_loc;
+  Span        cur_span;
+  Allocator*  alc;
+  doji_Error* err;
 } Lexer;
 
-void              lex_init(Lexer*, Allocator const*, char const* path, char const* src);
+void              lex_init(Lexer*, Allocator*, char const* path, char const* src);
 void              lex_destroy(Lexer*);
 Tok               lex_next(Lexer*);
 doji_Error const* lex_err(Lexer const*);

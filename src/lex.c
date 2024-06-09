@@ -1,3 +1,4 @@
+#include "ast.h"
 #include "str.h"
 #define __doji_lex_c
 
@@ -9,7 +10,7 @@ void tok_type_display(TokType type, StrBuilder* strb) {
   strb_push_str(strb, tok_type_str(type, NULL));
 }
 
-char const* tok_type_str(TokType type, Allocator const* alc) {
+char const* tok_type_str(TokType type, Allocator* alc) {
   switch (type) {
   case TOK_INT:        return "int";
   case TOK_FLOAT:      return "float";
@@ -82,7 +83,7 @@ static bool is_newline(char c) {
 
 /* ---------------- */
 
-void lex_init(Lexer* lex, Allocator const* alc, char const* path, char const* src) {
+void lex_init(Lexer* lex, Allocator* alc, char const* path, char const* src) {
   *lex = (Lexer){
     .src = src,
     .cur_loc = {.path = path, .line = 1, .col = 1},
@@ -106,14 +107,14 @@ static void lex_init_err(Lexer* lex, char u, char const* e) {
   strb_push_str(&strb, "', expected '");
   strb_push_str(&strb, e);
   strb_push(&strb, '\'');
-  char const* msg = strb_build(&strb);
+  char* msg = strb_build(&strb);
 
   if (lex->err) {
     err_destroy(lex->err);
   }
 
   lex->err = alc_alloc(lex->alc, sizeof(doji_Error));
-  err_init(lex->err, lex->cur_loc, msg);
+  err_init(lex->err, lex->alc, lex->cur_loc, msg);
 }
 
 static char lex_peek(Lexer const* lex) {
@@ -141,15 +142,25 @@ static char lex_expect(Lexer* lex, char e) {
   return c;
 }
 
+static Span lex_reset_span(Lexer* lex) {
+  Span cur_span = lex->cur_span;
+  lex->cur_span = (Span){
+    .start = lex->cur_span.start + lex->cur_span.len,
+    .len = 0,
+  };
+  return cur_span;
+}
+
 static void lex_skip_whitespace(Lexer* lex) {
   for (char c = lex_peek(lex); is_whitespace(c); c = lex_peek(lex)) {
     lex_advance(lex);
   }
+  lex_reset_span(lex);
 }
 
 static Tok lex_build_tok(Lexer* lex, TokType type) {
   return (Tok){
-    .span = lex->cur_span,
+    .span = lex_reset_span(lex),
     .type = type,
   };
 }
@@ -165,7 +176,7 @@ static Tok lex_build_num_tok(Lexer* lex) {
         return lex_build_tok(lex, TOK_EOF);
       } else {
         is_float = true;
-        c = lex_advance(lex);
+        c = lex_peek(lex);
         if (!is_digit(c)) {
           lex_init_err(lex, c, "digit");
           return (Tok){0};
@@ -203,6 +214,8 @@ static Tok lex_build_ident_tok(Lexer* lex) {
 }
 
 Tok lex_next(Lexer* lex) {
+  lex_skip_whitespace(lex);
+
   char c = lex_peek(lex);
 
 #define DOJI_LEX_CASE_SINGLE(c, t) \

@@ -22,7 +22,7 @@ static size_t size_from_align(uint8_t align) {
 
 /* ---------------- */
 
-void vec_init(Vector* vec, Allocator const* alc, size_t init_cap, size_t item_size) {
+void vec_init(Vector* vec, Allocator* alc, size_t init_cap, size_t item_size) {
   size_t actual_init_cap = init_cap != 0 ? init_cap : DOJI_VEC_DEFAULT_INIT_CAP;
 
   *vec = (Vector){

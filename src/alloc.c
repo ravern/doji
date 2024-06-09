@@ -15,7 +15,7 @@ void alc_init(
   };
 }
 
-void* alc_alloc(Allocator const* alc, size_t size) {
+void* alc_alloc(Allocator* alc, size_t size) {
   void* data = alc->alloc(alc->state, size);
   if (!data) {
     longjmp(*alc->err_buf, 1);
@@ -23,7 +23,7 @@ void* alc_alloc(Allocator const* alc, size_t size) {
   return data;
 }
 
-void* alc_realloc(Allocator const* alc, void* data, size_t size) {
+void* alc_realloc(Allocator* alc, void* data, size_t size) {
   void* new_data = alc->realloc(alc->state, data, size);
   if (!new_data) {
     alc_free(alc, data);
@@ -32,6 +32,6 @@ void* alc_realloc(Allocator const* alc, void* data, size_t size) {
   return new_data;
 }
 
-void alc_free(Allocator const* alc, void* data) {
+void alc_free(Allocator* alc, void* data) {
   return alc->free(alc->state, data);
 }

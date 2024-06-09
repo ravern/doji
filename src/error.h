@@ -14,18 +14,19 @@ typedef struct Loc {
 } Loc;
 
 void        loc_display(Loc, StrBuilder*);
-char const* loc_str(Loc, Allocator const*);
+char const* loc_str(Loc, Allocator*);
 
 /* ---------------- */
 
 struct doji_Error {
-  Loc         loc;
-  char const* msg;
+  Loc        loc;
+  char*      msg;
+  Allocator* alc;
 };
 
-void        err_init(doji_Error*, Loc, char const* msg);
+void        err_init(doji_Error*, Allocator*, Loc, char* msg);
 void        err_destroy(doji_Error*);
 void        err_display(doji_Error const*, StrBuilder*);
-char const* err_str(doji_Error const*, Allocator const*);
+char const* err_str(doji_Error const*, Allocator*);
 
 #endif

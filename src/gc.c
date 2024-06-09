@@ -23,7 +23,7 @@ void gc_alc_free(void* state, void* data) {
 
 /* ---------------- */
 
-void gc_init(GcState* gc, Allocator const* alc) {
+void gc_init(GcState* gc, Allocator* alc) {
   Allocator gc_alc;
   alc_init(&gc_alc, gc, alc->err_buf, gc_alc_alloc, gc_alc_realloc, gc_alc_free);
   *gc = (GcState){
@@ -43,11 +43,11 @@ void gc_destroy(GcState* gc) {
   }
 }
 
-void gc_set_root(GcState* gc, doji_Fiber* root) {
+void gc_set_root(GcState* gc, Fiber* root) {
   gc->root = root;
 }
 
-Allocator const* gc_alc(GcState* gc) {
+Allocator* gc_alc(GcState* gc) {
   return &gc->gc_alc;
 }
 

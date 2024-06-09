@@ -8,6 +8,7 @@
 
 #include "../src/alloc.h"
 
-void test_vector(Allocator const*);
+void test_vector(Allocator*);
+void test_lex(Allocator*);
 
 #endif
