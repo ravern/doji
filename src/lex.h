@@ -14,6 +14,7 @@ typedef enum TokType {
   TOK_INT,
   TOK_FLOAT,
   TOK_IDENT,
+  TOK_STR,
   /* Keywords */
   TOK_NIL,
   TOK_TRUE,

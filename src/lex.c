@@ -15,6 +15,7 @@ char const* tok_type_str(TokType type, Allocator* alc) {
   case TOK_INT:        return "int";
   case TOK_FLOAT:      return "float";
   case TOK_IDENT:      return "ident";
+  case TOK_STR:        return "string";
   case TOK_NIL:        return "nil";
   case TOK_TRUE:       return "true";
   case TOK_FALSE:      return "false";
@@ -167,6 +168,19 @@ static Tok lex_build_tok(Lexer* lex, TokType type) {
   };
 }
 
+static Tok lex_build_str_tok(Lexer* lex) {
+  lex_advance(lex);
+  for (char c = lex_peek(lex); c != '"'; c = lex_peek(lex)) {
+    if (c == '\0' || is_newline(c)) {
+      lex_init_err(lex, c, "\"");
+      return lex_build_tok(lex, TOK_EOF);
+    }
+    lex_advance(lex);
+  }
+  lex_advance(lex);
+  return lex_build_tok(lex, TOK_STR);
+}
+
 static Tok lex_build_num_tok(Lexer* lex) {
   bool is_float = false;
 
@@ -265,7 +279,9 @@ Tok lex_next(Lexer* lex) {
     return lex_build_tok(lex, TOK_EOF);
   }
   default: {
-    if (is_digit(c)) {
+    if (c == '"') {
+      return lex_build_str_tok(lex);
+    } else if (is_digit(c)) {
       return lex_build_num_tok(lex);
     } else if (is_alpha(c)) {
       return lex_build_ident_tok(lex);

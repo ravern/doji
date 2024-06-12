@@ -50,11 +50,73 @@ Span lit_span(Lit const* lit) {
 
 /* ---------------- */
 
+void pat_init_ident(Pat* pat, Span span, char const* ident) {
+  *pat = (Pat){
+    .span = span,
+    .type = PAT_IDENT,
+    .data = {.ident = ident},
+  };
+}
+
+Span pat_span(Pat const* pat) {
+  return pat->span;
+}
+
+/* ---------------- */
+
+void cond_init_bool(Cond* cond, Expr const* bool_) {
+  *cond = (Cond){
+    .type = COND_BOOL,
+    .data = {.bool_ = bool_},
+  };
+}
+
+void cond_init_pat(Cond* cond, Pat const* pat, Expr const* val) {
+  *cond = (Cond){
+    .type = COND_PAT,
+    .data = {.pat = {.pat = pat, .val = val}},
+  };
+}
+
+/* ---------------- */
+
 void expr_init_lit(Expr* expr, Span span, Lit lit) {
   *expr = (Expr){
     .span = span,
     .type = EXPR_LIT,
     .data = {.lit = lit},
+  };
+}
+
+void expr_init_ident(Expr* expr, Span span, char const* ident) {
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_IDENT,
+    .data = {.ident = ident},
+  };
+}
+
+void expr_init_list(Expr* expr, Span span, size_t len, Expr const* items) {
+  ListExpr list = {
+    .len = len,
+    .items = items,
+  };
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_LIST,
+    .data = {.list = list},
+  };
+}
+
+void expr_init_map(Expr* expr, Span span, size_t len, MapExprEntry const* ents) {
+  MapExpr map = {
+    .len = len,
+    .ents = ents,
+  };
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_MAP,
+    .data = {.map = map},
   };
 }
 
@@ -83,7 +145,7 @@ void expr_init_binary(Expr* expr, Span span, BinaryOp op, Expr const* l_opr, Exp
   };
 }
 
-void expr_init_block(Expr* expr, Span span, Stmt const* stmts, size_t len) {
+void expr_init_block(Expr* expr, Span span, size_t len, Stmt const* stmts) {
   BlockExpr block = {
     .len = len,
     .stmts = stmts,
@@ -95,7 +157,7 @@ void expr_init_block(Expr* expr, Span span, Stmt const* stmts, size_t len) {
   };
 }
 
-void expr_init_call(Expr* expr, Span span, Expr const* fn, Expr const* args, size_t arity) {
+void expr_init_call(Expr* expr, Span span, Expr const* fn, size_t arity, Expr const* args) {
   CallExpr call = {
     .fn = fn,
     .arity = arity,

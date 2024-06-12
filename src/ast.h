@@ -44,11 +44,45 @@ Span lit_span(Lit const*);
 
 /* ---------------- */
 
+typedef struct Pat Pat;
+
+typedef enum PatType {
+  PAT_IDENT,
+} PatType;
+
+struct Pat {
+  Span    span;
+  PatType type;
+  union {
+    char const* ident;
+  } data;
+};
+
+void pat_init_ident(Pat*, Span, char const*);
+Span pat_span(Pat const*);
+
+/* ---------------- */
+
 typedef struct Stmt Stmt;
 
 /* ---------------- */
 
 typedef struct Expr Expr;
+
+typedef struct ListExpr {
+  size_t      len;
+  Expr const* items;
+} ListExpr;
+
+typedef struct MapExprEntry {
+  Expr const* key;
+  Expr const* val;
+} MapExprEntry;
+
+typedef struct MapExpr {
+  size_t              len;
+  MapExprEntry const* ents;
+} MapExpr;
 
 typedef enum UnaryOp {
   UNARY_OP_NEG,
@@ -88,6 +122,7 @@ typedef struct BinaryExpr {
 typedef struct BlockExpr {
   size_t      len;
   Stmt const* stmts;
+  bool        has_ret;
 } BlockExpr;
 
 typedef struct CallExpr {
@@ -96,31 +131,88 @@ typedef struct CallExpr {
   Expr const* args;
 } CallExpr;
 
+typedef enum CondType {
+  COND_BOOL,
+  COND_PAT,
+} CondType;
+
+typedef struct PatCond {
+  Pat const*  pat;
+  Expr const* val;
+} PatCond;
+
+typedef struct Cond {
+  CondType type;
+  union {
+    Expr const* bool_;
+    PatCond     pat;
+  } data;
+} Cond;
+
+void cond_init_bool(Cond*, Expr const*);
+void cond_init_pat(Cond*, Pat const*, Expr const*);
+void cond_destroy(Cond*);
+
+typedef struct IfExpr {
+  Cond        cond;
+  Expr const* then;
+  Expr const* else_;
+} IfExpr;
+
+typedef struct WhileExpr {
+  Cond        cond;
+  Expr const* body;
+} WhileExpr;
+
+typedef struct ForExpr {
+  char const* ident;
+  Expr const* body;
+} ForExpr;
+
 typedef enum ExprType {
   EXPR_LIT,
+  EXPR_IDENT,
+  EXPR_LIST,
+  EXPR_MAP,
   EXPR_UNARY,
   EXPR_BINARY,
   EXPR_BLOCK,
   EXPR_CALL,
+  EXPR_IF,
+  EXPR_WHILE,
+  EXPR_FOR,
 } ExprType;
 
 struct Expr {
   Span     span;
   ExprType type;
   union {
-    Lit        lit;
-    UnaryExpr  unary;
-    BinaryExpr binary;
-    BlockExpr  block;
-    CallExpr   call;
+    Lit         lit;
+    char const* ident;
+    ListExpr    list;
+    MapExpr     map;
+    UnaryExpr   unary;
+    BinaryExpr  binary;
+    BlockExpr   block;
+    CallExpr    call;
+    IfExpr      if_;
+    WhileExpr   while_;
+    ForExpr     for_;
   } data;
 };
 
 void expr_init_lit(Expr*, Span, Lit);
+void expr_init_ident(Expr*, Span, char const*);
+void expr_init_list(Expr*, Span, size_t len, Expr const*);
+void expr_init_map(Expr*, Span, size_t len, MapExprEntry const*);
 void expr_init_unary(Expr*, Span, UnaryOp, Expr const*);
 void expr_init_binary(Expr*, Span, BinaryOp, Expr const*, Expr const*);
-void expr_init_block(Expr*, Span, Stmt const*, size_t len);
-void expr_init_call(Expr*, Span, Expr const*, Expr const*, size_t arity);
+void expr_init_block(Expr*, Span, size_t len, Stmt const*);
+void expr_init_call(Expr*, Span, Expr const*, size_t arity, Expr const*);
+void expr_init_if(Expr*, Span, Cond, Expr const*, Expr const*);
+void expr_init_while(Expr*, Span, Cond, Expr const*);
+void expr_init_for(Expr*, Span, char const*, Expr const*);
+void expr_destroy(Expr*);
 Span expr_span(Expr const*);
 
 /* ---------------- */

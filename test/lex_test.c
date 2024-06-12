@@ -9,7 +9,8 @@ void test_lex(Allocator* alc) {
   lex_init(
       &lex, alc, "<<memory>>",
       "1 + 2 * 3.2 / nil - false\n"
-      "true () [1] {foo}\n");
+      "true () [1] {foo}\n"
+      "\"boo\"\n");
 
   Tok one = lex_next(&lex);
   assert(!lex.err);
@@ -119,16 +120,22 @@ void test_lex(Allocator* alc) {
   assert(r_brace.span.start == 42);
   assert(r_brace.span.len == 1);
 
+  Tok boo = lex_next(&lex);
+  assert(!lex.err);
+  assert(boo.type == TOK_STR);
+  assert(boo.span.start == 44);
+  assert(boo.span.len == 5);
+
   Tok eof = lex_next(&lex);
   assert(!lex.err);
   assert(eof.type == TOK_EOF);
-  assert(eof.span.start == 44);
+  assert(eof.span.start == 50);
   assert(eof.span.len == 0);
 
   Tok another_eof = lex_next(&lex);
   assert(!lex.err);
   assert(eof.type == TOK_EOF);
-  assert(eof.span.start == 44);
+  assert(eof.span.start == 50);
   assert(eof.span.len == 0);
 
   lex_destroy(&lex);
