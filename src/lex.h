@@ -52,11 +52,12 @@ typedef enum TokType {
   TOK_LT_EQ,
   TOK_BANG,
   TOK_BANG_EQ,
-  TOK_AND,
-  TOK_OR,
-  TOK_BAND,
-  TOK_BOR,
-  TOK_BNOT,
+  TOK_AMP,
+  TOK_AMP_AMP,
+  TOK_BAR,
+  TOK_BAR_BAR,
+  TOK_CARET,
+  TOK_TILDE,
   /* Miscellaneous */
   TOK_EOF,
 } TokType;
@@ -68,6 +69,9 @@ typedef struct Tok {
   Span    span;
   TokType type;
 } Tok;
+
+Tok  tok_empty();
+bool tok_is_empty(Tok);
 
 /* ---------------- */
 

@@ -39,6 +39,7 @@ int main() {
 
   test_vector(&alc);
   test_lex(&alc);
+  test_parse(&alc);
 
   return 0;
 }

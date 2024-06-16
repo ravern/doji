@@ -1,5 +1,3 @@
-#include "ast.h"
-#include "str.h"
 #define __doji_lex_c
 
 #include "lex.h"
@@ -51,13 +49,25 @@ char const* tok_type_str(TokType type, Allocator* alc) {
   case TOK_LT_EQ:      return "'<='";
   case TOK_BANG:       return "'!'";
   case TOK_BANG_EQ:    return "'!='";
-  case TOK_AND:        return "'&&'";
-  case TOK_OR:         return "'||'";
-  case TOK_BAND:       return "'&'";
-  case TOK_BOR:        return "'|'";
-  case TOK_BNOT:       return "'~'";
+  case TOK_AMP:        return "'&'";
+  case TOK_AMP_AMP:    return "'&&'";
+  case TOK_BAR:        return "'|'";
+  case TOK_BAR_BAR:    return "'||'";
+  case TOK_CARET:      return "'^'";
+  case TOK_TILDE:      return "'~'";
   case TOK_EOF:        return "end of file";
   }
+}
+
+Tok tok_empty() {
+  return (Tok){
+    .span = span_empty(),
+    .type = TOK_EOF,
+  };
+}
+
+bool tok_is_empty(Tok tok) {
+  return tok.type == TOK_EOF && span_is_empty(tok.span);
 }
 
 /* ---------------- */
@@ -111,11 +121,9 @@ static void lex_init_err(Lexer* lex, char u, char const* e) {
     strb_push_str(&strb, e);
   }
   char* msg = strb_build(&strb);
-
   if (lex->err) {
     err_destroy(lex->err);
   }
-
   lex->err = alc_alloc(lex->alc, sizeof(doji_Error));
   err_init(lex->err, lex->alc, lex->cur_loc, msg);
 }
@@ -231,6 +239,13 @@ static Tok lex_build_ident_tok(Lexer* lex) {
 }
 
 Tok lex_next(Lexer* lex) {
+  if (lex->err) {
+    return (Tok){
+      .span = span_empty(),
+      .type = TOK_EOF,
+    };
+  }
+
   lex_skip_whitespace(lex);
 
   char c = lex_peek(lex);
@@ -272,9 +287,10 @@ Tok lex_next(Lexer* lex) {
     DOJI_LEX_CASE_DOUBLE('>', '=', TOK_GT, TOK_GT_EQ);
     DOJI_LEX_CASE_DOUBLE('<', '=', TOK_LT, TOK_LT_EQ);
     DOJI_LEX_CASE_DOUBLE('!', '=', TOK_BANG, TOK_BANG_EQ);
-    DOJI_LEX_CASE_DOUBLE('&', '&', TOK_BAND, TOK_AND);
-    DOJI_LEX_CASE_DOUBLE('|', '|', TOK_BOR, TOK_OR);
-    DOJI_LEX_CASE_SINGLE('~', TOK_BNOT);
+    DOJI_LEX_CASE_DOUBLE('&', '&', TOK_AMP, TOK_AMP_AMP);
+    DOJI_LEX_CASE_DOUBLE('|', '|', TOK_BAR, TOK_BAR_BAR);
+    DOJI_LEX_CASE_SINGLE('^', TOK_CARET);
+    DOJI_LEX_CASE_SINGLE('~', TOK_TILDE);
   case '\0': {
     return lex_build_tok(lex, TOK_EOF);
   }

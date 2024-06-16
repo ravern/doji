@@ -10,5 +10,6 @@
 
 void test_vector(Allocator*);
 void test_lex(Allocator*);
+void test_parse(Allocator*);
 
 #endif

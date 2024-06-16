@@ -4,48 +4,28 @@
 
 /* ---------------- */
 
-void lit_init_nil(Lit* lit, Span span) {
-  *lit = (Lit){
-    .span = span,
-    .type = LIT_NIL,
-    .data = {0},
+Span span_empty() {
+  return (Span){
+    .start = 0,
+    .len = 0,
   };
 }
 
-void lit_init_bool(Lit* lit, Span span, bool b) {
-  *lit = (Lit){
-    .span = span,
-    .type = LIT_BOOL,
-    .data = {.b = b},
-  };
+bool span_is_empty(Span span) {
+  return span.start == 0 && span.len == 0;
 }
 
-void lit_init_int(Lit* lit, Span span, int64_t i) {
-  *lit = (Lit){
-    .span = span,
-    .type = LIT_INT,
-    .data = {.i = i},
-  };
+char const* span_str(Span span, Allocator* alc) {
+  StrBuilder strb;
+  strb_init(&strb, alc, 0);
+  span_display(span, &strb);
+  return strb_build(&strb);
 }
 
-void lit_init_float(Lit* lit, Span span, double f) {
-  *lit = (Lit){
-    .span = span,
-    .type = LIT_FLOAT,
-    .data = {.f = f},
-  };
-}
-
-void lit_init_str(Lit* lit, Span span, char const* s) {
-  *lit = (Lit){
-    .span = span,
-    .type = LIT_STR,
-    .data = {.s = s},
-  };
-}
-
-Span lit_span(Lit const* lit) {
-  return lit->span;
+void span_display(Span span, StrBuilder* strb) {
+  strb_push_size(strb, span.start);
+  strb_push_str(strb, "..");
+  strb_push_size(strb, span.start + span.len);
 }
 
 /* ---------------- */
@@ -64,14 +44,14 @@ Span pat_span(Pat const* pat) {
 
 /* ---------------- */
 
-void cond_init_bool(Cond* cond, Expr const* bool_) {
+void cond_init_bool(Cond* cond, Expr* bool_) {
   *cond = (Cond){
     .type = COND_BOOL,
     .data = {.bool_ = bool_},
   };
 }
 
-void cond_init_pat(Cond* cond, Pat const* pat, Expr const* val) {
+void cond_init_pat(Cond* cond, Pat* pat, Expr* val) {
   *cond = (Cond){
     .type = COND_PAT,
     .data = {.pat = {.pat = pat, .val = val}},
@@ -80,11 +60,43 @@ void cond_init_pat(Cond* cond, Pat const* pat, Expr const* val) {
 
 /* ---------------- */
 
-void expr_init_lit(Expr* expr, Span span, Lit lit) {
+void expr_init_nil(Expr* expr, Span span) {
   *expr = (Expr){
     .span = span,
     .type = EXPR_LIT,
-    .data = {.lit = lit},
+    .data = {.lit = {.type = LIT_NIL, .data = {0}}},
+  };
+}
+
+void expr_init_bool(Expr* expr, Span span, bool b) {
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_LIT,
+    .data = {.lit = {.type = LIT_BOOL, .data = {.b = b}}},
+  };
+}
+
+void expr_init_int(Expr* expr, Span span, int64_t i) {
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_LIT,
+    .data = {.lit = {.type = LIT_INT, .data = {.i = i}}},
+  };
+}
+
+void expr_init_float(Expr* expr, Span span, double f) {
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_LIT,
+    .data = {.lit = {.type = LIT_FLOAT, .data = {.f = f}}},
+  };
+}
+
+void expr_init_str(Expr* expr, Span span, char const* s) {
+  *expr = (Expr){
+    .span = span,
+    .type = EXPR_LIT,
+    .data = {.lit = {.type = LIT_STR, .data = {.s = s}}},
   };
 }
 
@@ -96,7 +108,7 @@ void expr_init_ident(Expr* expr, Span span, char const* ident) {
   };
 }
 
-void expr_init_list(Expr* expr, Span span, size_t len, Expr const* items) {
+void expr_init_list(Expr* expr, Span span, size_t len, Expr* items) {
   ListExpr list = {
     .len = len,
     .items = items,
@@ -108,7 +120,7 @@ void expr_init_list(Expr* expr, Span span, size_t len, Expr const* items) {
   };
 }
 
-void expr_init_map(Expr* expr, Span span, size_t len, MapExprEntry const* ents) {
+void expr_init_map(Expr* expr, Span span, size_t len, MapExprEntry* ents) {
   MapExpr map = {
     .len = len,
     .ents = ents,
@@ -120,7 +132,7 @@ void expr_init_map(Expr* expr, Span span, size_t len, MapExprEntry const* ents) 
   };
 }
 
-void expr_init_unary(Expr* expr, Span span, UnaryOp op, Expr const* opr) {
+void expr_init_unary(Expr* expr, Span span, UnaryOp op, Expr* opr) {
   UnaryExpr unary = {
     .op = op,
     .opr = opr,
@@ -132,7 +144,7 @@ void expr_init_unary(Expr* expr, Span span, UnaryOp op, Expr const* opr) {
   };
 }
 
-void expr_init_binary(Expr* expr, Span span, BinaryOp op, Expr const* l_opr, Expr const* r_opr) {
+void expr_init_binary(Expr* expr, Span span, BinaryOp op, Expr* l_opr, Expr* r_opr) {
   BinaryExpr binary = {
     .op = op,
     .l_opr = l_opr,
@@ -145,7 +157,7 @@ void expr_init_binary(Expr* expr, Span span, BinaryOp op, Expr const* l_opr, Exp
   };
 }
 
-void expr_init_block(Expr* expr, Span span, size_t len, Stmt const* stmts) {
+void expr_init_block(Expr* expr, Span span, size_t len, Stmt* stmts) {
   BlockExpr block = {
     .len = len,
     .stmts = stmts,
@@ -157,7 +169,7 @@ void expr_init_block(Expr* expr, Span span, size_t len, Stmt const* stmts) {
   };
 }
 
-void expr_init_call(Expr* expr, Span span, Expr const* fn, size_t arity, Expr const* args) {
+void expr_init_call(Expr* expr, Span span, Expr* fn, size_t arity, Expr* args) {
   CallExpr call = {
     .fn = fn,
     .arity = arity,
@@ -189,7 +201,7 @@ Span stmt_span(Stmt const* stmt) {
 
 /* ---------------- */
 
-void ast_init(Ast* ast, Stmt const* stmts, size_t len) {
+void ast_init(Ast* ast, Stmt* stmts, size_t len) {
   *ast = (Ast){
     .len = len,
     .stmts = stmts,

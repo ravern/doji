@@ -17,6 +17,7 @@ void  strb_destroy(StrBuilder*);
 void  strb_push(StrBuilder*, char);
 void  strb_push_str(StrBuilder*, char const*);
 void  strb_push_size(StrBuilder*, size_t);
+void  strb_indent(StrBuilder*, size_t);
 char* strb_build(StrBuilder*);
 
 #endif
