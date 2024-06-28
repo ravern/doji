@@ -12,8 +12,9 @@ typedef struct Span {
   size_t len;
 } Span;
 
-Span        span_empty();
-bool        span_is_empty(Span);
+Span        span_new(size_t start, size_t len);
+Span        span_zero();
+bool        span_is_zero(Span);
 char const* span_str(Span, Allocator*);
 void        span_display(Span, StrBuilder*);
 
@@ -53,8 +54,8 @@ struct Pat {
   } data;
 };
 
-void pat_init_ident(Pat*, Span, char const*);
-Span pat_span(Pat const*);
+Pat  pat_new_ident(Span, const char*);
+Span pat_span(const Pat*);
 
 /* ---------------- */
 

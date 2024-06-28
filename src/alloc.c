@@ -4,15 +4,14 @@
 
 /* ---------------- */
 
-void alc_init(
-    Allocator* alc, void* state, jmp_buf* err_buf, AllocFn alloc, ReallocFn realloc, FreeFn free) {
-  *alc = (Allocator){
-    .err_buf = err_buf,
-    .state = state,
-    .alloc = alloc,
-    .realloc = realloc,
-    .free = free,
-  };
+Allocator alc_new(void* state, jmp_buf* err_buf, AllocFn alloc, ReallocFn realloc, FreeFn free) {
+  Allocator alc;
+  alc.err_buf = err_buf;
+  alc.state = state;
+  alc.alloc = alloc;
+  alc.realloc = realloc;
+  alc.free = free;
+  return alc;
 }
 
 void* alc_alloc(Allocator* alc, size_t size) {

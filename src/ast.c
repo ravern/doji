@@ -5,10 +5,10 @@
 /* ---------------- */
 
 Span span_empty() {
-  return (Span){
-    .start = 0,
-    .len = 0,
-  };
+  Span span;
+  span.start = 0;
+  span.len = 0;
+  return span;
 }
 
 bool span_is_empty(Span span) {

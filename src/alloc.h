@@ -17,10 +17,10 @@ typedef struct Allocator {
   FreeFn    free;
 } Allocator;
 
-void  alc_init(Allocator*, void* state, jmp_buf* err_buf, AllocFn, ReallocFn, FreeFn);
-void* alc_alloc(Allocator*, size_t);
-void* alc_realloc(Allocator*, void*, size_t);
-void  alc_free(Allocator*, void*);
+Allocator alc_new(void* state, jmp_buf* err_buf, AllocFn, ReallocFn, FreeFn);
+void*     alc_alloc(Allocator*, size_t);
+void*     alc_realloc(Allocator*, void*, size_t);
+void      alc_free(Allocator*, void*);
 
 /* ---------------- */
 
