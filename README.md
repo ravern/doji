@@ -1,8 +1,8 @@
 # Dōji
 
-Practical, dynamic programming language.
+Practical scripting language for Rust.
 
-## Usage
+## Guide
 
 Here is the "Hello, world!" program for Dōji.
 
