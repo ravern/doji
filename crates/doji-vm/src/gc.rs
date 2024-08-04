@@ -1,5 +1,7 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
+    marker::PhantomData,
+    ops::Deref,
     rc::{Rc, Weak},
 };
 
@@ -7,53 +9,81 @@ pub trait Trace<'gc>: 'gc {
     fn trace(&self, tracer: &Tracer);
 }
 
+impl<'gc, T> Trace<'gc> for RefCell<T>
+where
+    T: Trace<'gc>,
+{
+    fn trace(&self, tracer: &Tracer) {
+        self.borrow().trace(tracer);
+    }
+}
+
+impl<'gc, T> Trace<'gc> for Option<T>
+where
+    T: Trace<'gc>,
+{
+    fn trace(&self, tracer: &Tracer) {
+        if let Some(value) = self {
+            value.trace(tracer);
+        }
+    }
+}
+
 pub struct Tracer;
 
+impl Tracer {
+    fn trace<'gc, T>(&self, handle: &Handle<'gc, T>)
+    where
+        T: Trace<'gc>,
+    {
+        if let Some(root) = handle.try_root() {
+            if !root.object.is_marked() {
+                root.object.mark();
+                root.object.value.trace(self);
+            }
+        }
+    }
+}
+
 pub struct Heap<'gc> {
-    object_list: Option<Rc<Object<'gc, dyn Trace<'gc>>>>,
+    objects: Vec<Rc<Object<'gc, dyn Trace<'gc>>>>,
 }
 
 impl<'gc> Heap<'gc> {
     pub fn new() -> Heap<'gc> {
-        Heap { object_list: None }
+        Heap {
+            objects: Vec::new(),
+        }
     }
 
     pub fn allocate<T>(&mut self, value: T) -> Root<'gc, T>
     where
         T: Trace<'gc>,
     {
-        let next_object = self.object_list.take();
-        let object = Object::new(value, next_object);
+        let object = Object::new(value);
         let dyn_object = Rc::clone(&object) as Rc<Object<dyn Trace<'gc>>>;
-        self.object_list = Some(dyn_object);
+        self.objects.push(dyn_object);
         Root::from_object(object)
     }
 
     pub fn collect(&mut self) {
-        // 1. Iterate over all objects.
-        //     a. If their counts are 1 and 0, just drop them immediately.
-        //     b. Otherwise if they're already marked, skip them.
-        //     b. Otherwise, call trace to mark them.
-        // 2. Iterate over all objects.
-        //     a. If they are marked, unmark them.
-        //     b. Otherwise, drop them.
+        let tracer = Tracer;
 
-        // FIXME: The below doesn't work because we're trying to delete objects while
-        //        also trying to skip some of them. I think we should loop on `object.next`
-        //        instead of `object` (to perform deletes) and also make `object_list`
-        //        always have one dummy item.
-        //
-        // let mut object_list = self.object_list.take();
-        // while let Some(ref object) = object_list {
-        //     if Rc::strong_count(object) == 1 && Rc::weak_count(object) == 0 {
-        //         object_list = object.header.next_object.take();
-        //     } else if object.header.is_marked.get() {
-        //         object_list = object.header.next_object.take();
-        //     } else {
-        //         object.value.trace(&Tracer);
-        //         object_list = object.header.next_object.take();
-        //     }
-        // }
+        // Sweep trivial + mark
+        self.objects.retain(|object| {
+            if Rc::strong_count(object) == 1 && Rc::weak_count(object) == 0 {
+                false
+            } else if Rc::strong_count(object) > 1 && !object.is_marked() {
+                object.mark();
+                object.value.trace(&tracer);
+                true
+            } else {
+                true
+            }
+        });
+
+        // Sweep
+        self.objects.retain(|object| object.unmark());
     }
 }
 
@@ -77,6 +107,17 @@ where
     }
 }
 
+impl<'gc, T> Deref for Root<'gc, T>
+where
+    T: Trace<'gc> + ?Sized,
+{
+    type Target = T;
+
+    fn deref(&self) -> &T {
+        &self.object.value
+    }
+}
+
 pub struct Handle<'gc, T>
 where
     T: Trace<'gc> + ?Sized,
@@ -97,11 +138,23 @@ where
     }
 }
 
+impl<'gc, T> Clone for Handle<'gc, T>
+where
+    T: Trace<'gc> + ?Sized,
+{
+    fn clone(&self) -> Handle<'gc, T> {
+        Handle {
+            object: Weak::clone(&self.object),
+        }
+    }
+}
+
 struct Object<'gc, T>
 where
     T: Trace<'gc> + ?Sized,
 {
-    header: ObjectHeader<'gc>,
+    phantom: PhantomData<&'gc ()>,
+    header: ObjectHeader,
     value: T,
 }
 
@@ -109,24 +162,149 @@ impl<'gc, T> Object<'gc, T>
 where
     T: Trace<'gc>,
 {
-    fn new(value: T, next: Option<Rc<Object<'gc, dyn Trace<'gc>>>>) -> Rc<Object<'gc, T>> {
+    fn new(value: T) -> Rc<Object<'gc, T>> {
         Rc::new(Object {
-            header: ObjectHeader::new(next),
+            phantom: PhantomData,
+            header: ObjectHeader::new(),
             value,
         })
     }
 }
 
-struct ObjectHeader<'gc> {
-    is_marked: Cell<bool>,
-    next_object: Cell<Option<Rc<Object<'gc, dyn Trace<'gc>>>>>,
+impl<'gc, T> Object<'gc, T>
+where
+    T: Trace<'gc> + ?Sized,
+{
+    fn mark(&self) {
+        self.header.is_marked.set(true);
+    }
+
+    fn unmark(&self) -> bool {
+        self.header.is_marked.replace(false)
+    }
+
+    fn is_marked(&self) -> bool {
+        self.header.is_marked.get()
+    }
 }
 
-impl<'gc> ObjectHeader<'gc> {
-    fn new(next: Option<Rc<Object<'gc, dyn Trace<'gc>>>>) -> ObjectHeader<'gc> {
+struct ObjectHeader {
+    is_marked: Cell<bool>,
+}
+
+impl ObjectHeader {
+    fn new() -> ObjectHeader {
         ObjectHeader {
             is_marked: Cell::new(false),
-            next_object: Cell::new(next),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::cell::RefCell;
+
+    use super::*;
+
+    struct Simple(u32);
+
+    impl<'gc> Trace<'gc> for Simple {
+        fn trace(&self, _tracer: &Tracer) {}
+    }
+
+    struct Composite<'gc> {
+        foo: Handle<'gc, Simple>,
+        bar: Handle<'gc, Simple>,
+    }
+
+    impl<'gc> Trace<'gc> for Composite<'gc> {
+        fn trace(&self, tracer: &Tracer) {
+            tracer.trace(&self.foo);
+            tracer.trace(&self.bar);
+        }
+    }
+
+    struct Cyclic<'gc> {
+        foo: Handle<'gc, RefCell<Option<Cyclic<'gc>>>>,
+    }
+
+    impl<'gc> Trace<'gc> for Cyclic<'gc> {
+        fn trace(&self, tracer: &Tracer) {
+            tracer.trace(&self.foo);
+        }
+    }
+
+    #[test]
+    fn test_simple() {
+        let mut heap = Heap::new();
+        let root = heap.allocate(Simple(42));
+        let handle = root.as_handle();
+
+        heap.collect();
+        assert!(handle.try_root().is_some());
+
+        drop(root);
+
+        heap.collect();
+        assert!(handle.try_root().is_none());
+    }
+
+    #[test]
+    fn test_composite() {
+        let mut heap = Heap::new();
+
+        let foo_handle = heap.allocate(Simple(42)).as_handle();
+        let bar_handle = heap.allocate(Simple(43)).as_handle();
+        let root = heap.allocate(Composite {
+            foo: Handle::clone(&foo_handle),
+            bar: Handle::clone(&bar_handle),
+        });
+
+        let handle = root.as_handle();
+
+        heap.collect();
+        assert!(handle.try_root().is_some());
+        assert!(foo_handle.try_root().is_some());
+        assert!(bar_handle.try_root().is_some());
+
+        drop(root);
+
+        heap.collect();
+        assert!(handle.try_root().is_none());
+        assert!(foo_handle.try_root().is_none());
+        assert!(bar_handle.try_root().is_none());
+    }
+
+    #[test]
+    fn test_cyclic() {
+        let mut heap = Heap::new();
+
+        let none_root = heap.allocate(RefCell::new(None)).as_handle();
+        let first_root = heap.allocate(RefCell::new(Some(Cyclic { foo: none_root })));
+        let second_root = heap.allocate(RefCell::new(Some(Cyclic {
+            foo: first_root.as_handle(),
+        })));
+        *first_root.borrow_mut() = Some(Cyclic {
+            foo: second_root.as_handle(),
+        });
+
+        let first_handle = first_root.as_handle();
+        let second_handle = second_root.as_handle();
+
+        heap.collect();
+        assert!(first_handle.try_root().is_some());
+        assert!(second_handle.try_root().is_some());
+
+        drop(first_root);
+
+        heap.collect();
+        assert!(first_handle.try_root().is_some());
+        assert!(second_handle.try_root().is_some());
+
+        drop(second_root);
+
+        heap.collect();
+        assert!(first_handle.try_root().is_none());
+        assert!(second_handle.try_root().is_none());
     }
 }
