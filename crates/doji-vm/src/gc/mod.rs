@@ -1,38 +1,18 @@
 use std::{
-    cell::{Cell, RefCell},
+    cell::Cell,
     marker::PhantomData,
     ops::Deref,
     rc::{Rc, Weak},
 };
 
-pub trait Trace<'gc>: 'gc {
-    fn trace(&self, tracer: &Tracer);
-}
+pub use self::trace::Trace;
 
-impl<'gc, T> Trace<'gc> for RefCell<T>
-where
-    T: Trace<'gc>,
-{
-    fn trace(&self, tracer: &Tracer) {
-        self.borrow().trace(tracer);
-    }
-}
-
-impl<'gc, T> Trace<'gc> for Option<T>
-where
-    T: Trace<'gc>,
-{
-    fn trace(&self, tracer: &Tracer) {
-        if let Some(value) = self {
-            value.trace(tracer);
-        }
-    }
-}
+mod trace;
 
 pub struct Tracer;
 
 impl Tracer {
-    fn trace<'gc, T>(&self, handle: &Handle<'gc, T>)
+    pub fn trace_handle<'gc, T>(&self, handle: &Handle<'gc, T>)
     where
         T: Trace<'gc>,
     {
@@ -219,8 +199,8 @@ mod tests {
 
     impl<'gc> Trace<'gc> for Composite<'gc> {
         fn trace(&self, tracer: &Tracer) {
-            tracer.trace(&self.foo);
-            tracer.trace(&self.bar);
+            tracer.trace_handle(&self.foo);
+            tracer.trace_handle(&self.bar);
         }
     }
 
@@ -230,7 +210,7 @@ mod tests {
 
     impl<'gc> Trace<'gc> for Cyclic<'gc> {
         fn trace(&self, tracer: &Tracer) {
-            tracer.trace(&self.foo);
+            tracer.trace_handle(&self.foo);
         }
     }
 
