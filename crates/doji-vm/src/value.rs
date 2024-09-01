@@ -1,7 +1,41 @@
-use std::collections::HashMap;
+use std::{
+    collections::HashMap,
+    fmt,
+    hash::{Hash, Hasher},
+};
 
 use crate::gc::{Handle, Trace, Tracer};
 
+#[derive(Debug)]
+pub enum ValueType {
+    Nil,
+    Bool,
+    Int,
+    Float,
+    String,
+    List,
+    Map,
+    Closure,
+    Fiber,
+}
+
+impl fmt::Display for ValueType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueType::Nil => write!(f, "nil"),
+            ValueType::Bool => write!(f, "bool"),
+            ValueType::Int => write!(f, "int"),
+            ValueType::Float => write!(f, "float"),
+            ValueType::String => write!(f, "string"),
+            ValueType::List => write!(f, "list"),
+            ValueType::Map => write!(f, "map"),
+            ValueType::Closure => write!(f, "closure"),
+            ValueType::Fiber => write!(f, "fiber"),
+        }
+    }
+}
+
+#[derive(Debug)]
 pub enum Value<'gc> {
     Uninitialized,
     Nil,
@@ -9,6 +43,23 @@ pub enum Value<'gc> {
     Int(i64),
     Float(f64),
     Object(Handle<'gc, Object<'gc>>),
+}
+
+impl<'gc> Value<'gc> {
+    pub fn ty(&self) -> ValueType {
+        match self {
+            Value::Uninitialized => panic!("uninitialized value has no type"),
+            Value::Nil => ValueType::Nil,
+            Value::Bool(_) => ValueType::Bool,
+            Value::Int(_) => ValueType::Int,
+            Value::Float(_) => ValueType::Float,
+            Value::Object(handle) => match &*handle.root() {
+                Object::String(_) => ValueType::String,
+                Object::List(_) => ValueType::List,
+                Object::Map(_) => ValueType::Map,
+            },
+        }
+    }
 }
 
 impl<'gc> Clone for Value<'gc> {
@@ -24,6 +75,35 @@ impl<'gc> Clone for Value<'gc> {
     }
 }
 
+impl<'gc> Eq for Value<'gc> {}
+
+impl<'gc> Hash for Value<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        match self {
+            Value::Uninitialized => 0.hash(state),
+            Value::Nil => 1.hash(state),
+            Value::Bool(value) => value.hash(state),
+            Value::Int(value) => value.hash(state),
+            Value::Float(value) => value.to_bits().hash(state),
+            Value::Object(handle) => Handle::as_ptr(handle).hash(state),
+        }
+    }
+}
+
+impl<'gc> PartialEq for Value<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Value::Uninitialized, Value::Uninitialized) => true,
+            (Value::Nil, Value::Nil) => true,
+            (Value::Bool(left), Value::Bool(right)) => left == right,
+            (Value::Int(left), Value::Int(right)) => left == right,
+            (Value::Float(left), Value::Float(right)) => left == right,
+            (Value::Object(left), Value::Object(right)) => Handle::ptr_eq(left, right),
+            _ => false,
+        }
+    }
+}
+
 impl<'gc> Trace<'gc> for Value<'gc> {
     fn trace(&self, tracer: &Tracer) {
         if let Value::Object(handle) = self {
@@ -32,10 +112,22 @@ impl<'gc> Trace<'gc> for Value<'gc> {
     }
 }
 
+#[derive(Debug)]
 pub enum Object<'gc> {
     String(Box<str>),
     List(List<'gc>),
     Map(Map<'gc>),
+}
+
+impl<'gc> PartialEq for Object<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Object::String(left), Object::String(right)) => left == right,
+            (Object::List(left), Object::List(right)) => left == right,
+            (Object::Map(left), Object::Map(right)) => left == right,
+            _ => false,
+        }
+    }
 }
 
 impl<'gc> Trace<'gc> for Object<'gc> {
@@ -48,8 +140,15 @@ impl<'gc> Trace<'gc> for Object<'gc> {
     }
 }
 
+#[derive(Debug)]
 pub struct List<'gc> {
     items: Vec<Value<'gc>>,
+}
+
+impl<'gc> PartialEq for List<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
 }
 
 impl<'gc> Trace<'gc> for List<'gc> {
@@ -60,8 +159,15 @@ impl<'gc> Trace<'gc> for List<'gc> {
     }
 }
 
+#[derive(Debug)]
 pub struct Map<'gc> {
     items: HashMap<Value<'gc>, Value<'gc>>,
+}
+
+impl<'gc> PartialEq for Map<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        self.items == other.items
+    }
 }
 
 impl<'gc> Trace<'gc> for Map<'gc> {

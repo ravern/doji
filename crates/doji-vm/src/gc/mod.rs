@@ -1,5 +1,6 @@
 use std::{
     cell::Cell,
+    fmt,
     marker::PhantomData,
     ops::Deref,
     rc::{Rc, Weak},
@@ -87,6 +88,26 @@ where
     }
 }
 
+impl<'gc, T> Clone for Root<'gc, T>
+where
+    T: Trace<'gc> + ?Sized,
+{
+    fn clone(&self) -> Root<'gc, T> {
+        Root {
+            object: Rc::clone(&self.object),
+        }
+    }
+}
+
+impl<'gc, T> fmt::Debug for Root<'gc, T>
+where
+    T: fmt::Debug + Trace<'gc> + ?Sized,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Root").field(&self.object).finish()
+    }
+}
+
 impl<'gc, T> Deref for Root<'gc, T>
 where
     T: Trace<'gc> + ?Sized,
@@ -113,8 +134,20 @@ where
         Handle { object }
     }
 
+    pub fn root(&self) -> Root<'gc, T> {
+        self.try_root().expect("dangling handle")
+    }
+
     pub fn try_root(&self) -> Option<Root<'gc, T>> {
         Weak::upgrade(&self.object).map(Root::from_object)
+    }
+
+    pub fn as_ptr(&self) -> *const T {
+        self.object.as_ptr() as *const T
+    }
+
+    pub fn ptr_eq(left: &Handle<'gc, T>, right: &Handle<'gc, T>) -> bool {
+        Weak::ptr_eq(&left.object, &right.object)
     }
 }
 
@@ -126,6 +159,15 @@ where
         Handle {
             object: Weak::clone(&self.object),
         }
+    }
+}
+
+impl<'gc, T> fmt::Debug for Handle<'gc, T>
+where
+    T: fmt::Debug + Trace<'gc> + ?Sized,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_tuple("Handle").field(&self.object).finish()
     }
 }
 
@@ -165,6 +207,15 @@ where
 
     fn is_marked(&self) -> bool {
         self.header.is_marked.get()
+    }
+}
+
+impl<'gc, T> fmt::Debug for Object<'gc, T>
+where
+    T: fmt::Debug + Trace<'gc> + ?Sized,
+{
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.value.fmt(f)
     }
 }
 
@@ -215,7 +266,7 @@ mod tests {
     }
 
     #[test]
-    fn test_simple() {
+    fn simple() {
         let mut heap = Heap::new();
         let root = heap.allocate(Simple(42));
         let handle = root.as_handle();
@@ -230,7 +281,7 @@ mod tests {
     }
 
     #[test]
-    fn test_composite() {
+    fn composite() {
         let mut heap = Heap::new();
 
         let foo_handle = heap.allocate(Simple(42)).as_handle();
@@ -256,7 +307,7 @@ mod tests {
     }
 
     #[test]
-    fn test_cyclic() {
+    fn cyclic() {
         let mut heap = Heap::new();
 
         let none_root = heap.allocate(RefCell::new(None)).as_handle();

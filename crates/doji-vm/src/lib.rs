@@ -1,4 +1,3 @@
-mod bytecode;
 mod error;
 mod fiber;
 mod gc;

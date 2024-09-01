@@ -1,94 +1,97 @@
-use std::rc::Rc;
+use doji_bytecode::{
+    operand::{CodeOffset, StackSlot},
+    Chunk, ChunkIndex, Constant, Instruction, Program,
+};
 
 use crate::{
-    bytecode::{Instruction, Module, Program},
-    error::RuntimeError,
+    error::{RuntimeError, RuntimeErrorContext},
     gc::Heap,
-    value::{Object, Value},
+    value::Value,
 };
 
 pub struct Fiber<'gc> {
-    program: Rc<Program>,
-    module_path: Box<str>,
-    program_counter: usize,
+    chunk_index: ChunkIndex,
+    code_offset: CodeOffset,
     stack: FiberStack<'gc>,
 }
 
 impl<'gc> Fiber<'gc> {
-    pub fn new(program: Rc<Program>, module_path: &str, program_counter: usize) -> Self {
+    pub fn new(chunk_index: ChunkIndex) -> Self {
         Self {
-            program,
-            module_path: module_path.into(),
-            program_counter,
+            chunk_index,
+            code_offset: CodeOffset::zero(),
             stack: FiberStack::new(),
         }
     }
 
-    pub async fn run(&mut self, heap: &mut Heap<'gc>) {}
+    pub async fn run(&mut self, program: &Program, heap: &Heap<'gc>) -> Result<(), RuntimeError> {
+        let chunk = self.chunk(program);
 
-    async fn step(&mut self, heap: &mut Heap<'gc>) -> Result<(), RuntimeError> {
-        let instruction = self.get_instruction()?;
+        while self.code_offset.as_usize() < chunk.len() {
+            self.step(program, heap).await?;
+        }
+
+        Ok(())
+    }
+
+    async fn step(&mut self, program: &Program, heap: &Heap<'gc>) -> Result<(), RuntimeError> {
+        let chunk = self.chunk(program);
+
+        let instruction = chunk
+            .instruction(self.code_offset)
+            .ok_or_else(|| RuntimeError::invalid_code_offset(self.error_context(chunk)))?;
+
+        self.code_offset = self.code_offset.increment();
+
         match instruction {
             Instruction::Noop => {}
-            Instruction::Nil { dest } => {
-                self.stack.set(dest, Value::Nil);
+            Instruction::Nil { to } => {
+                self.stack.set(to, Value::Nil);
             }
-            Instruction::True { dest } => {
-                self.stack.set(dest, Value::Bool(true));
+            Instruction::True { to } => {
+                self.stack.set(to, Value::Bool(true));
             }
-            Instruction::False { dest } => {
-                self.stack.set(dest, Value::Bool(false));
+            Instruction::False { to } => {
+                self.stack.set(to, Value::Bool(false));
             }
-            Instruction::Int { dest, value } => {
-                self.stack.set(dest, Value::Int(value as i64));
+            Instruction::Int { to, from } => {
+                self.stack.set(to, Value::Int(from.as_i64()));
             }
-            Instruction::Const { dest, index } => {
-                let constant = self.get_constant(index)?;
+            Instruction::Constant { to, from } => {
+                let constant = program.constant(from).cloned().ok_or_else(|| {
+                    RuntimeError::invalid_constant_index(self.error_context(chunk), from)
+                })?;
                 match constant {
-                    crate::bytecode::Constant::Int(value) => {
-                        self.stack.set(dest, Value::Int(*value));
+                    Constant::Int(value) => {
+                        self.stack.set(to, Value::Int(value));
                     }
-                    crate::bytecode::Constant::Float(value) => {
-                        self.stack.set(dest, Value::Float(*value));
-                    }
-                    crate::bytecode::Constant::String(value) => {
-                        let string = heap.allocate(Object::String(value.clone()));
-                        self.stack.set(dest, Value::Object(string.as_handle()));
+                    Constant::Float(value) => {
+                        self.stack.set(to, Value::Float(value));
                     }
                 }
             }
-            Instruction::Add { dest, left, right } => {
-                let left = self
-                    .stack
-                    .get(left)
-                    .ok_or(RuntimeError::InvalidStackIndex {
-                        module_path: self.module_path.clone(),
-                        stack_index: left,
-                    })?;
-                let right = self
-                    .stack
-                    .get(right)
-                    .ok_or(RuntimeError::InvalidStackIndex {
-                        module_path: self.module_path.clone(),
-                        stack_index: right,
-                    })?;
-                match (left, right) {
+            Instruction::Add { to, left, right } => {
+                let left = self.stack_get(chunk, left)?;
+                let right = self.stack_get(chunk, right)?;
+                match (&left, &right) {
                     (Value::Int(left), Value::Int(right)) => {
-                        self.stack.set(dest, Value::Int(left + right));
+                        self.stack.set(to, Value::Int(left + right));
                     }
                     (Value::Float(left), Value::Int(right)) => {
-                        self.stack.set(dest, Value::Float(left + right as f64));
+                        self.stack.set(to, Value::Float(left + *right as f64));
                     }
                     (Value::Int(left), Value::Float(right)) => {
-                        self.stack.set(dest, Value::Float(left as f64 + right));
+                        self.stack.set(to, Value::Float(*left as f64 + right));
                     }
                     (Value::Float(left), Value::Float(right)) => {
-                        self.stack.set(dest, Value::Float(left + right));
+                        self.stack.set(to, Value::Float(left + right));
                     }
                     _ => {
-                        return Err(RuntimeError::InvalidArgumentType {
-                            module_path: self.module_path.clone(),
-                        })
+                        return Err(RuntimeError::invalid_type(
+                            self.error_context(chunk),
+                            left.ty(),
+                            right.ty(),
+                        ))
                     }
                 }
             }
@@ -98,37 +101,34 @@ impl<'gc> Fiber<'gc> {
         Ok(())
     }
 
-    fn get_module(&self) -> Result<&Module, RuntimeError> {
-        self.program
-            .modules
-            .get(&self.module_path)
-            .ok_or(RuntimeError::InvalidModulePath {
-                module_path: self.module_path.clone(),
+    fn stack_get(&self, chunk: &Chunk, slot: StackSlot) -> Result<Value<'gc>, RuntimeError> {
+        self.stack
+            .get(slot)
+            .and_then(|value| {
+                if let Value::Uninitialized = value {
+                    None
+                } else {
+                    Some(value)
+                }
             })
+            .ok_or_else(|| RuntimeError::invalid_stack_slot(self.error_context(chunk), slot))
     }
 
-    fn get_instruction(&self) -> Result<Instruction, RuntimeError> {
-        self.get_module()?
-            .code
-            .get(self.program_counter)
-            .copied()
-            .ok_or(RuntimeError::InvalidProgramCounter {
-                module_path: self.module_path.clone(),
-                program_counter: self.program_counter,
-            })
+    fn chunk<'a>(&self, program: &'a Program) -> &'a Chunk {
+        program
+            .chunk(self.chunk_index)
+            .expect("fiber contains invalid chunk index")
     }
 
-    fn get_constant(&self, index: u32) -> Result<&crate::bytecode::Constant, RuntimeError> {
-        self.get_module()?
-            .constants
-            .get(index as usize)
-            .ok_or(RuntimeError::InvalidConstantIndex {
-                module_path: self.module_path.clone(),
-                constant_index: index,
-            })
+    fn error_context(&self, chunk: &Chunk) -> RuntimeErrorContext {
+        RuntimeErrorContext {
+            module_path: chunk.module_path.clone(),
+            code_offset: self.code_offset,
+        }
     }
 }
 
+#[derive(Debug)]
 pub struct FiberStack<'gc> {
     base: usize,
     values: Vec<Value<'gc>>,
@@ -142,17 +142,88 @@ impl<'gc> FiberStack<'gc> {
         }
     }
 
-    pub fn get(&self, index: u16) -> Option<Value<'gc>> {
-        let absolute_index = self.base + index as usize;
-        self.values.get(absolute_index).cloned()
+    pub fn get(&self, slot: StackSlot) -> Option<Value<'gc>> {
+        let index = self.base + slot.as_usize();
+        self.values.get(index).cloned()
     }
 
-    pub fn set(&mut self, index: u16, value: Value<'gc>) {
-        let absolute_index = self.base + index as usize;
-        if self.values.len() <= absolute_index {
-            self.values.resize(absolute_index + 1, Value::Uninitialized);
+    pub fn set(&mut self, slot: StackSlot, value: Value<'gc>) {
+        let index = self.base + slot.as_usize();
+        if self.values.len() <= index {
+            self.values.resize(index + 1, Value::Uninitialized);
         }
-        *self.values.get_mut(absolute_index).unwrap() = value;
+        *self.values.get_mut(index).unwrap() = value;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use doji_bytecode::operand::{IntImmediate, StackSlot};
+    use smol::LocalExecutor;
+
+    use super::*;
+
+    #[test]
+    fn simple() {
+        let ex = LocalExecutor::new();
+
+        let program = Program {
+            constants: vec![],
+            chunks: vec![Chunk {
+                module_path: "src/main.doji".to_string(),
+                name: "main".to_string(),
+                code: vec![Instruction::Int {
+                    to: StackSlot(0),
+                    from: IntImmediate(123),
+                }],
+            }],
+        };
+        let heap = Heap::new();
+
+        let mut fiber = Fiber::new(ChunkIndex(0));
+
+        smol::block_on(ex.run(async {
+            fiber.run(&program, &heap).await.unwrap();
+        }));
+
+        assert_eq!(fiber.stack.get(StackSlot(0)), Some(Value::Int(123)));
+    }
+
+    #[test]
+    fn add() {
+        let ex = LocalExecutor::new();
+
+        let program = Program {
+            constants: vec![],
+            chunks: vec![Chunk {
+                module_path: "src/main.doji".to_string(),
+                name: "main".to_string(),
+                code: vec![
+                    Instruction::Int {
+                        to: StackSlot(0),
+                        from: IntImmediate(123),
+                    },
+                    Instruction::Int {
+                        to: StackSlot(1),
+                        from: IntImmediate(123),
+                    },
+                    Instruction::Add {
+                        to: StackSlot(2),
+                        left: StackSlot(0),
+                        right: StackSlot(1),
+                    },
+                ],
+            }],
+        };
+        let heap = Heap::new();
+
+        let mut fiber = Fiber::new(ChunkIndex(0));
+
+        smol::block_on(ex.run(async {
+            fiber.run(&program, &heap).await.unwrap();
+        }));
+
+        assert_eq!(fiber.stack.get(StackSlot(2)), Some(Value::Int(246)));
     }
 }
 
