@@ -4,9 +4,11 @@ use std::{
     hash::{Hash, Hasher},
 };
 
-use crate::gc::{Handle, Trace, Tracer};
+use doji_bytecode::Constant;
 
-#[derive(Debug)]
+use crate::gc::{Handle, Heap, Trace, Tracer};
+
+#[derive(Debug, PartialEq)]
 pub enum ValueType {
     Nil,
     Bool,
@@ -37,7 +39,6 @@ impl fmt::Display for ValueType {
 
 #[derive(Debug)]
 pub enum Value<'gc> {
-    Uninitialized,
     Nil,
     Bool(bool),
     Int(i64),
@@ -46,9 +47,18 @@ pub enum Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
+    pub fn from_constant(constant: Constant, heap: &Heap<'gc>) -> Value<'gc> {
+        match constant {
+            Constant::Int(value) => Value::Int(value),
+            Constant::Float(value) => Value::Float(value),
+            Constant::String(string) => {
+                Value::Object(heap.allocate(Object::String(string)).as_handle())
+            }
+        }
+    }
+
     pub fn ty(&self) -> ValueType {
         match self {
-            Value::Uninitialized => panic!("uninitialized value has no type"),
             Value::Nil => ValueType::Nil,
             Value::Bool(_) => ValueType::Bool,
             Value::Int(_) => ValueType::Int,
@@ -65,7 +75,6 @@ impl<'gc> Value<'gc> {
 impl<'gc> Clone for Value<'gc> {
     fn clone(&self) -> Self {
         match self {
-            Value::Uninitialized => Value::Uninitialized,
             Value::Nil => Value::Nil,
             Value::Bool(value) => Value::Bool(*value),
             Value::Int(value) => Value::Int(*value),
@@ -80,8 +89,7 @@ impl<'gc> Eq for Value<'gc> {}
 impl<'gc> Hash for Value<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
         match self {
-            Value::Uninitialized => 0.hash(state),
-            Value::Nil => 1.hash(state),
+            Value::Nil => 0.hash(state),
             Value::Bool(value) => value.hash(state),
             Value::Int(value) => value.hash(state),
             Value::Float(value) => value.to_bits().hash(state),
@@ -93,7 +101,6 @@ impl<'gc> Hash for Value<'gc> {
 impl<'gc> PartialEq for Value<'gc> {
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {
-            (Value::Uninitialized, Value::Uninitialized) => true,
             (Value::Nil, Value::Nil) => true,
             (Value::Bool(left), Value::Bool(right)) => left == right,
             (Value::Int(left), Value::Int(right)) => left == right,

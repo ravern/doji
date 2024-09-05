@@ -1,21 +1,21 @@
 use std::{error::Error, fmt};
 
-use doji_bytecode::{
-    operand::{CodeOffset, ConstantIndex, StackSlot},
-    ChunkIndex,
-};
-
 use crate::value::ValueType;
 
 #[derive(Debug)]
 pub struct RuntimeErrorContext {
-    pub module_path: String,
-    pub code_offset: CodeOffset,
+    pub module_path: Box<str>,
+    pub chunk_name: Box<str>,
+    pub bytecode_offset: usize,
 }
 
 impl fmt::Display for RuntimeErrorContext {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}:{}", self.module_path, self.code_offset.as_usize())
+        write!(
+            f,
+            "{}:{}:{}",
+            self.module_path, self.chunk_name, self.bytecode_offset
+        )
     }
 }
 
@@ -26,42 +26,58 @@ pub struct RuntimeError {
 }
 
 impl RuntimeError {
-    pub fn invalid_type(
-        context: RuntimeErrorContext,
-        expected: ValueType,
-        received: ValueType,
-    ) -> Self {
+    pub fn invalid_type<E>(context: RuntimeErrorContext, expected: E, received: ValueType) -> Self
+    where
+        E: Into<Box<[ValueType]>>,
+    {
         Self {
             context,
-            kind: RuntimeErrorKind::InvalidType { expected, received },
+            kind: RuntimeErrorKind::InvalidType {
+                expected: expected.into(),
+                received,
+            },
         }
     }
 
-    pub fn invalid_code_offset(context: RuntimeErrorContext) -> Self {
+    pub fn invalid_bytecode_offset(context: RuntimeErrorContext) -> Self {
         Self {
             context,
-            kind: RuntimeErrorKind::InvalidBytecode(InvalidBytecode::CodeOffset),
+            kind: RuntimeErrorKind::InvalidBytecodeOffset,
         }
     }
 
-    pub fn invalid_constant_index(context: RuntimeErrorContext, index: ConstantIndex) -> Self {
+    pub fn invalid_constant_index(context: RuntimeErrorContext, index: usize) -> Self {
         Self {
             context,
-            kind: RuntimeErrorKind::InvalidBytecode(InvalidBytecode::ConstantIndex(index)),
+            kind: RuntimeErrorKind::InvalidConstantIndex(index),
         }
     }
 
-    pub fn invalid_chunk_index(context: RuntimeErrorContext, index: ChunkIndex) -> Self {
+    pub fn invalid_chunk_index(context: RuntimeErrorContext, index: usize) -> Self {
         Self {
             context,
-            kind: RuntimeErrorKind::InvalidBytecode(InvalidBytecode::ChunkIndex(index)),
+            kind: RuntimeErrorKind::InvalidChunkIndex(index),
         }
     }
 
-    pub fn invalid_stack_slot(context: RuntimeErrorContext, slot: StackSlot) -> Self {
+    pub fn invalid_stack_slot(context: RuntimeErrorContext, slot: usize) -> Self {
         Self {
             context,
-            kind: RuntimeErrorKind::InvalidBytecode(InvalidBytecode::StackSlot(slot)),
+            kind: RuntimeErrorKind::InvalidStackSlot(slot),
+        }
+    }
+
+    pub fn operand_width_exceeded(context: RuntimeErrorContext) -> Self {
+        Self {
+            context,
+            kind: RuntimeErrorKind::OperandWidthExceeded,
+        }
+    }
+
+    pub fn stack_underflow(context: RuntimeErrorContext) -> Self {
+        Self {
+            context,
+            kind: RuntimeErrorKind::StackUnderfow,
         }
     }
 
@@ -84,45 +100,45 @@ impl Error for RuntimeError {}
 
 #[derive(Debug)]
 pub enum RuntimeErrorKind {
-    InvalidBytecode(InvalidBytecode),
+    InvalidBytecodeOffset,
+    InvalidConstantIndex(usize),
+    InvalidChunkIndex(usize),
+    InvalidStackSlot(usize),
     InvalidType {
-        expected: ValueType,
+        expected: Box<[ValueType]>,
         received: ValueType,
     },
+    OperandWidthExceeded,
+    StackUnderfow,
 }
 
 impl fmt::Display for RuntimeErrorKind {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            RuntimeErrorKind::InvalidBytecode(invalid_bytecode) => {
-                write!(f, "{}", invalid_bytecode)
+            RuntimeErrorKind::InvalidBytecodeOffset => {
+                write!(f, "invalid bytecode offset")
             }
+            RuntimeErrorKind::InvalidConstantIndex(index) => {
+                write!(f, "invalid constant index: {}", index)
+            }
+            RuntimeErrorKind::InvalidChunkIndex(index) => {
+                write!(f, "invalid chunk index: {}", index)
+            }
+            RuntimeErrorKind::InvalidStackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
             RuntimeErrorKind::InvalidType { expected, received } => {
                 write!(
                     f,
                     "invalid type: expected {}, received {}",
-                    expected, received
+                    expected
+                        .into_iter()
+                        .map(ToString::to_string)
+                        .collect::<Vec<String>>()
+                        .join(", "),
+                    received
                 )
             }
-        }
-    }
-}
-
-#[derive(Debug)]
-pub enum InvalidBytecode {
-    CodeOffset,
-    ConstantIndex(ConstantIndex),
-    ChunkIndex(ChunkIndex),
-    StackSlot(StackSlot),
-}
-
-impl fmt::Display for InvalidBytecode {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            InvalidBytecode::CodeOffset => write!(f, "invalid code offset"),
-            InvalidBytecode::ConstantIndex(index) => write!(f, "invalid constant index: {}", index),
-            InvalidBytecode::ChunkIndex(index) => write!(f, "invalid chunk index: {}", index),
-            InvalidBytecode::StackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
+            RuntimeErrorKind::OperandWidthExceeded => write!(f, "operand width exceeded"),
+            RuntimeErrorKind::StackUnderfow => write!(f, "stack underflow"),
         }
     }
 }
@@ -134,70 +150,79 @@ mod tests {
     #[test]
     fn display_invalid_code_offset() {
         let context = RuntimeErrorContext {
-            module_path: "src/main.doji".to_string(),
-            code_offset: CodeOffset(399),
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
         };
-        let error = RuntimeError::invalid_code_offset(context);
+        let error = RuntimeError::invalid_bytecode_offset(context);
 
         assert_eq!(
             error.to_string(),
-            "runtime error: src/main.doji:399: invalid code offset"
+            "runtime error: src/main.doji:main:399: invalid code offset"
         );
     }
 
     #[test]
     fn display_invalid_constant_index() {
         let context = RuntimeErrorContext {
-            module_path: "src/main.doji".to_string(),
-            code_offset: CodeOffset(399),
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
         };
-        let error = RuntimeError::invalid_constant_index(context, ConstantIndex(42));
+        let error = RuntimeError::invalid_constant_index(context, 42);
 
         assert_eq!(
             error.to_string(),
-            "runtime error: src/main.doji:399: invalid constant index: 42"
+            "runtime error: src/main.doji:main:399: invalid constant index: 42"
         );
     }
 
     #[test]
     fn display_invalid_chunk_index() {
         let context = RuntimeErrorContext {
-            module_path: "src/main.doji".to_string(),
-            code_offset: CodeOffset(399),
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
         };
-        let error = RuntimeError::invalid_chunk_index(context, ChunkIndex(42));
+        let error = RuntimeError::invalid_chunk_index(context, 42);
 
         assert_eq!(
             error.to_string(),
-            "runtime error: src/main.doji:399: invalid chunk index: 42"
+            "runtime error: src/main.doji:main:399: invalid chunk index: 42"
         );
     }
 
     #[test]
     fn display_invalid_stack_slot() {
         let context = RuntimeErrorContext {
-            module_path: "src/main.doji".to_string(),
-            code_offset: CodeOffset(399),
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
         };
-        let error = RuntimeError::invalid_stack_slot(context, StackSlot(42));
+        let error = RuntimeError::invalid_stack_slot(context, 42);
 
         assert_eq!(
             error.to_string(),
-            "runtime error: src/main.doji:399: invalid stack slot: 42"
+            "runtime error: src/main.doji:main:399: invalid stack slot: 42"
         );
     }
 
     #[test]
     fn display_invalid_type() {
         let context = RuntimeErrorContext {
-            module_path: "src/main.doji".to_string(),
-            code_offset: CodeOffset(399),
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
         };
-        let error = RuntimeError::invalid_type(context, ValueType::Int, ValueType::Float);
+        let error = RuntimeError::invalid_type(
+            context,
+            [ValueType::Int, ValueType::Float],
+            ValueType::Bool,
+        );
 
         assert_eq!(
             error.to_string(),
-            "runtime error: src/main.doji:399: invalid type: expected int, received float"
+            "runtime error: src/main.doji:main:399: invalid type: expected int, float, received bool"
         );
     }
 }

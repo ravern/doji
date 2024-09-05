@@ -1,58 +1,39 @@
-use std::fmt;
-
-use operand::CodeOffset;
+use std::mem::size_of;
 
 pub use crate::constant::Constant;
-pub use crate::instruction::Instruction;
-
-use crate::operand::ConstantIndex;
 
 mod constant;
-mod instruction;
-pub mod operand;
+pub mod opcode;
+
+pub const OPERAND_WIDTH: usize = size_of::<u64>();
 
 pub struct Program {
-    pub constants: Vec<Constant>,
-    pub chunks: Vec<Chunk>,
+    pub constants: Box<[Constant]>,
+    pub chunks: Box<[Chunk]>,
 }
 
 impl Program {
-    pub fn chunk(&self, index: ChunkIndex) -> Option<&Chunk> {
-        self.chunks.get(index.as_usize())
+    pub fn constant(&self, index: usize) -> Option<&Constant> {
+        self.constants.get(index)
     }
 
-    pub fn constant(&self, index: ConstantIndex) -> Option<&Constant> {
-        self.constants.get(index.as_usize())
+    pub fn chunk(&self, index: usize) -> Option<&Chunk> {
+        self.chunks.get(index)
     }
 }
 
 pub struct Chunk {
-    pub module_path: String,
-    pub name: String,
-    pub code: Vec<Instruction>,
+    pub module_path: Box<str>,
+    pub name: Box<str>,
+    pub bytecode: Box<[u8]>,
 }
 
 impl Chunk {
-    pub fn instruction(&self, offset: CodeOffset) -> Option<Instruction> {
-        self.code.get(offset.as_usize()).copied()
+    pub fn byte(&self, offset: usize) -> Option<u8> {
+        self.bytecode.get(offset).copied()
     }
 
-    pub fn len(&self) -> usize {
-        self.code.len()
-    }
-}
-
-#[derive(Clone, Copy, Debug)]
-pub struct ChunkIndex(pub usize);
-
-impl ChunkIndex {
-    pub fn as_usize(self) -> usize {
-        self.0
-    }
-}
-
-impl fmt::Display for ChunkIndex {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.0)
+    pub fn size(&self) -> usize {
+        self.bytecode.len()
     }
 }

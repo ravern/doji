@@ -1,5 +1,5 @@
 use std::{
-    cell::Cell,
+    cell::{Cell, RefCell},
     fmt,
     marker::PhantomData,
     ops::Deref,
@@ -27,31 +27,32 @@ impl Tracer {
 }
 
 pub struct Heap<'gc> {
-    objects: Vec<Rc<Object<'gc, dyn Trace<'gc>>>>,
+    objects: RefCell<Vec<Rc<Object<'gc, dyn Trace<'gc>>>>>,
 }
 
 impl<'gc> Heap<'gc> {
     pub fn new() -> Heap<'gc> {
         Heap {
-            objects: Vec::new(),
+            objects: RefCell::new(Vec::new()),
         }
     }
 
-    pub fn allocate<T>(&mut self, value: T) -> Root<'gc, T>
+    pub fn allocate<T>(&self, value: T) -> Root<'gc, T>
     where
         T: Trace<'gc>,
     {
         let object = Object::new(value);
         let dyn_object = Rc::clone(&object) as Rc<Object<dyn Trace<'gc>>>;
-        self.objects.push(dyn_object);
+        self.objects.borrow_mut().push(dyn_object);
         Root::from_object(object)
     }
 
     pub fn collect(&mut self) {
         let tracer = Tracer;
+        let mut objects_mut = self.objects.borrow_mut();
 
         // Sweep trivial + mark
-        self.objects.retain(|object| {
+        objects_mut.retain(|object| {
             if Rc::strong_count(object) == 1 && Rc::weak_count(object) == 0 {
                 false
             } else if Rc::strong_count(object) > 1 && !object.is_marked() {
@@ -64,7 +65,7 @@ impl<'gc> Heap<'gc> {
         });
 
         // Sweep
-        self.objects.retain(|object| object.unmark());
+        objects_mut.retain(|object| object.unmark());
     }
 }
 

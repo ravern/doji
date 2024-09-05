@@ -1,129 +1,177 @@
-use doji_bytecode::{
-    operand::{CodeOffset, StackSlot},
-    Chunk, ChunkIndex, Constant, Instruction, Program,
-};
+use std::ops::{Add, Div, Mul, Rem, Sub};
+
+use doji_bytecode::{opcode::*, Chunk, Constant, Program, OPERAND_WIDTH};
 
 use crate::{
     error::{RuntimeError, RuntimeErrorContext},
     gc::Heap,
-    value::Value,
+    value::{Value, ValueType},
 };
 
 pub struct Fiber<'gc> {
-    chunk_index: ChunkIndex,
-    code_offset: CodeOffset,
+    chunk_index: usize,
+    acc_operand: usize,
+    num_operand_exts: usize,
+    bytecode_offset: usize,
     stack: FiberStack<'gc>,
 }
 
 impl<'gc> Fiber<'gc> {
-    pub fn new(chunk_index: ChunkIndex) -> Self {
+    pub fn new(chunk_index: usize) -> Self {
         Self {
             chunk_index,
-            code_offset: CodeOffset::zero(),
+            acc_operand: 0,
+            num_operand_exts: 0,
+            bytecode_offset: 0,
             stack: FiberStack::new(),
         }
     }
 
     pub async fn run(&mut self, program: &Program, heap: &Heap<'gc>) -> Result<(), RuntimeError> {
         let chunk = self.chunk(program);
-
-        while self.code_offset.as_usize() < chunk.len() {
+        while self.bytecode_offset < chunk.size() {
             self.step(program, heap).await?;
         }
-
         Ok(())
     }
 
     async fn step(&mut self, program: &Program, heap: &Heap<'gc>) -> Result<(), RuntimeError> {
-        let chunk = self.chunk(program);
-
-        let instruction = chunk
-            .instruction(self.code_offset)
-            .ok_or_else(|| RuntimeError::invalid_code_offset(self.error_context(chunk)))?;
-
-        self.code_offset = self.code_offset.increment();
-
-        match instruction {
-            Instruction::Noop => {}
-            Instruction::Nil { to } => {
-                self.stack.set(to, Value::Nil);
-            }
-            Instruction::True { to } => {
-                self.stack.set(to, Value::Bool(true));
-            }
-            Instruction::False { to } => {
-                self.stack.set(to, Value::Bool(false));
-            }
-            Instruction::Int { to, from } => {
-                self.stack.set(to, Value::Int(from.as_i64()));
-            }
-            Instruction::Constant { to, from } => {
-                let constant = program.constant(from).cloned().ok_or_else(|| {
-                    RuntimeError::invalid_constant_index(self.error_context(chunk), from)
-                })?;
-                match constant {
-                    Constant::Int(value) => {
-                        self.stack.set(to, Value::Int(value));
-                    }
-                    Constant::Float(value) => {
-                        self.stack.set(to, Value::Float(value));
-                    }
-                }
-            }
-            Instruction::Add { to, left, right } => {
-                let left = self.stack_get(chunk, left)?;
-                let right = self.stack_get(chunk, right)?;
-                match (&left, &right) {
+        macro_rules! arithmetic {
+            ($op:ident) => {{
+                let right = self.stack_pop(program)?;
+                let left = self.stack_pop(program)?;
+                match (left, right) {
                     (Value::Int(left), Value::Int(right)) => {
-                        self.stack.set(to, Value::Int(left + right));
-                    }
-                    (Value::Float(left), Value::Int(right)) => {
-                        self.stack.set(to, Value::Float(left + *right as f64));
+                        self.stack.push(Value::Int(left.$op(right)));
                     }
                     (Value::Int(left), Value::Float(right)) => {
-                        self.stack.set(to, Value::Float(*left as f64 + right));
+                        self.stack.push(Value::Float((left as f64).$op(right)));
+                    }
+                    (Value::Float(left), Value::Int(right)) => {
+                        self.stack.push(Value::Float(left.$op(right as f64)));
                     }
                     (Value::Float(left), Value::Float(right)) => {
-                        self.stack.set(to, Value::Float(left + right));
+                        self.stack.push(Value::Float(left.$op(right)));
                     }
-                    _ => {
+                    (Value::Int(_), received) | (Value::Float(_), received) | (received, _) => {
                         return Err(RuntimeError::invalid_type(
-                            self.error_context(chunk),
-                            left.ty(),
-                            right.ty(),
-                        ))
+                            self.error_context(program),
+                            [ValueType::Int, ValueType::Float],
+                            received.ty(),
+                        ));
                     }
                 }
-            }
-            _ => todo!(),
+            }};
         }
+
+        let opcode = self.opcode(program)?;
+        let operand = self.operand(program)?;
+
+        if opcode == OP_EXT {
+            self.num_operand_exts += 1;
+        } else {
+            self.acc_operand = 0;
+            self.num_operand_exts = 0;
+        }
+
+        match opcode {
+            OP_NOP => {}
+
+            OP_EXT => {}
+
+            OP_NIL => self.stack.push(Value::Nil),
+            OP_TRUE => self.stack.push(Value::Bool(true)),
+            OP_FALSE => self.stack.push(Value::Bool(false)),
+            OP_INT => {
+                self.stack
+                    .push(Value::Int(i64::from_ne_bytes(operand.to_ne_bytes())));
+            }
+            OP_CONST => {
+                let constant = self.constant(program, operand)?;
+                self.stack.push(Value::from_constant(constant, heap));
+            }
+
+            OP_ADD => arithmetic!(add),
+            OP_SUB => arithmetic!(sub),
+            OP_MUL => arithmetic!(mul),
+            OP_DIV => arithmetic!(div),
+            OP_REM => arithmetic!(rem),
+
+            _ => unreachable!(),
+        }
+
+        self.bytecode_offset = self.next_bytecode_offset();
 
         Ok(())
     }
 
-    fn stack_get(&self, chunk: &Chunk, slot: StackSlot) -> Result<Value<'gc>, RuntimeError> {
-        self.stack
-            .get(slot)
-            .and_then(|value| {
-                if let Value::Uninitialized = value {
-                    None
-                } else {
-                    Some(value)
-                }
-            })
-            .ok_or_else(|| RuntimeError::invalid_stack_slot(self.error_context(chunk), slot))
-    }
-
-    fn chunk<'a>(&self, program: &'a Program) -> &'a Chunk {
+    fn chunk<'p>(&self, program: &'p Program) -> &'p Chunk {
         program
             .chunk(self.chunk_index)
             .expect("fiber contains invalid chunk index")
     }
 
-    fn error_context(&self, chunk: &Chunk) -> RuntimeErrorContext {
+    fn constant<'p>(&self, program: &'p Program, index: usize) -> Result<Constant, RuntimeError> {
+        program
+            .constant(index)
+            .cloned()
+            .ok_or_else(|| RuntimeError::invalid_constant_index(self.error_context(program), index))
+    }
+
+    fn stack_get<'p>(&self, program: &'p Program, slot: usize) -> Result<Value<'gc>, RuntimeError> {
+        self.stack
+            .get(slot)
+            .ok_or_else(|| RuntimeError::invalid_stack_slot(self.error_context(program), slot))
+    }
+
+    fn stack_pop<'p>(&mut self, program: &'p Program) -> Result<Value<'gc>, RuntimeError> {
+        self.stack
+            .pop()
+            .ok_or_else(|| RuntimeError::stack_underflow(self.error_context(program)))
+    }
+
+    fn opcode<'p>(&self, program: &'p Program) -> Result<u8, RuntimeError> {
+        self.next_bytecode_offset(); // check for overflow
+        self.chunk(program)
+            .byte(self.bytecode_offset)
+            .ok_or_else(|| RuntimeError::invalid_bytecode_offset(self.error_context(program)))
+    }
+
+    fn operand<'p>(&mut self, program: &'p Program) -> Result<usize, RuntimeError> {
+        self.next_bytecode_offset(); // check for overflow
+        let operand = self
+            .chunk(program)
+            .byte(self.bytecode_offset + 1)
+            .ok_or_else(|| RuntimeError::invalid_bytecode_offset(self.error_context(program)))?;
+        self.extend_operand(program, operand)
+    }
+
+    fn extend_operand<'p>(
+        &mut self,
+        program: &'p Program,
+        operand: u8,
+    ) -> Result<usize, RuntimeError> {
+        if self.num_operand_exts >= OPERAND_WIDTH {
+            return Err(RuntimeError::operand_width_exceeded(
+                self.error_context(program),
+            ));
+        }
+        self.acc_operand = (self.acc_operand << 8) | operand as usize;
+        Ok(self.acc_operand)
+    }
+
+    fn next_bytecode_offset(&self) -> usize {
+        self.bytecode_offset
+            .checked_add(2)
+            .expect("chunk size exceeds maximum integer width")
+    }
+
+    fn error_context<'p>(&self, program: &'p Program) -> RuntimeErrorContext {
+        let chunk = self.chunk(program);
         RuntimeErrorContext {
             module_path: chunk.module_path.clone(),
-            code_offset: self.code_offset,
+            chunk_name: chunk.name.clone(),
+            bytecode_offset: self.bytecode_offset,
         }
     }
 }
@@ -142,88 +190,79 @@ impl<'gc> FiberStack<'gc> {
         }
     }
 
-    pub fn get(&self, slot: StackSlot) -> Option<Value<'gc>> {
-        let index = self.base + slot.as_usize();
+    pub fn get(&self, slot: usize) -> Option<Value<'gc>> {
+        let index = self.base + slot;
         self.values.get(index).cloned()
     }
 
-    pub fn set(&mut self, slot: StackSlot, value: Value<'gc>) {
-        let index = self.base + slot.as_usize();
-        if self.values.len() <= index {
-            self.values.resize(index + 1, Value::Uninitialized);
-        }
-        *self.values.get_mut(index).unwrap() = value;
+    pub fn push(&mut self, value: Value<'gc>) {
+        self.values.push(value);
+    }
+
+    pub fn pop(&mut self) -> Option<Value<'gc>> {
+        self.values.pop()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use doji_bytecode::operand::{IntImmediate, StackSlot};
-    use smol::LocalExecutor;
-
     use super::*;
 
-    #[test]
-    fn simple() {
-        let ex = LocalExecutor::new();
-
-        let program = Program {
-            constants: vec![],
-            chunks: vec![Chunk {
-                module_path: "src/main.doji".to_string(),
-                name: "main".to_string(),
-                code: vec![Instruction::Int {
-                    to: StackSlot(0),
-                    from: IntImmediate(123),
-                }],
-            }],
-        };
-        let heap = Heap::new();
-
-        let mut fiber = Fiber::new(ChunkIndex(0));
-
-        smol::block_on(ex.run(async {
+    fn run<'gc>(heap: &Heap<'gc>, program: &Program) -> Value<'gc> {
+        smol::block_on(async {
+            let mut fiber = Fiber::new(0);
             fiber.run(&program, &heap).await.unwrap();
-        }));
+            fiber.stack.get(0)
+        })
+        .expect("fiber stack empty after running")
+    }
 
-        assert_eq!(fiber.stack.get(StackSlot(0)), Some(Value::Int(123)));
+    #[test]
+    fn int() {
+        let heap = Heap::new();
+        let program = Program {
+            constants: [].into(),
+            chunks: [Chunk {
+                module_path: "src/main.doji".into(),
+                name: "main".into(),
+                bytecode: [OP_INT, 0x23u8].into(),
+            }]
+            .into(),
+        };
+        assert_eq!(run(&heap, &program), Value::Int(0x23));
+    }
+
+    #[test]
+    fn ext() {
+        let heap = Heap::new();
+        let program = Program {
+            constants: [].into(),
+            chunks: [Chunk {
+                module_path: "src/main.doji".into(),
+                name: "main".into(),
+                bytecode: [OP_EXT, 0x12u8, OP_INT, 0x34u8].into(),
+            }]
+            .into(),
+        };
+        assert_eq!(run(&heap, &program), Value::Int(0x1234));
     }
 
     #[test]
     fn add() {
-        let ex = LocalExecutor::new();
-
-        let program = Program {
-            constants: vec![],
-            chunks: vec![Chunk {
-                module_path: "src/main.doji".to_string(),
-                name: "main".to_string(),
-                code: vec![
-                    Instruction::Int {
-                        to: StackSlot(0),
-                        from: IntImmediate(123),
-                    },
-                    Instruction::Int {
-                        to: StackSlot(1),
-                        from: IntImmediate(123),
-                    },
-                    Instruction::Add {
-                        to: StackSlot(2),
-                        left: StackSlot(0),
-                        right: StackSlot(1),
-                    },
-                ],
-            }],
-        };
         let heap = Heap::new();
-
-        let mut fiber = Fiber::new(ChunkIndex(0));
-
-        smol::block_on(ex.run(async {
-            fiber.run(&program, &heap).await.unwrap();
-        }));
-
-        assert_eq!(fiber.stack.get(StackSlot(2)), Some(Value::Int(246)));
+        let program = Program {
+            constants: [].into(),
+            chunks: [Chunk {
+                module_path: "src/main.doji".into(),
+                name: "main".into(),
+                bytecode: [
+                    OP_INT, 0x12u8, OP_INT, 0x34u8, OP_ADD, 0x00u8, OP_INT, 0x56u8, OP_ADD, 0x00u8,
+                ]
+                .into(),
+            }]
+            .into(),
+        };
+        assert_eq!(run(&heap, &program), Value::Int(0x9c));
     }
 }
 
@@ -233,7 +272,7 @@ mod tests {
 //     pub fn testing_123() {
 // let ex = LocalExecutor::new();
 
-// let code = vec![0, 1, 2, 3];
+// let code = [0, 1, 2, 3];
 
 // smol::block_on(ex.run(async move {
 //     let task_1 = smol::spawn(async move { Fiber { code: &code, pc: 0 } });
