@@ -1,5 +1,6 @@
 use std::{
     cell::{Cell, RefCell},
+    collections::HashMap,
     fmt,
     marker::PhantomData,
     ops::Deref,
@@ -38,12 +39,51 @@ where
     }
 }
 
+impl<'gc> Trace<'gc> for str {
+    fn trace(&self, tracer: &Tracer) {}
+}
+
+impl<'gc, T> Trace<'gc> for [T]
+where
+    T: Trace<'gc>,
+{
+    fn trace(&self, tracer: &Tracer) {
+        for value in self {
+            value.trace(tracer);
+        }
+    }
+}
+
+impl<'gc, T> Trace<'gc> for Vec<T>
+where
+    T: Trace<'gc>,
+{
+    fn trace(&self, tracer: &Tracer) {
+        for value in self {
+            value.trace(tracer);
+        }
+    }
+}
+
+impl<'gc, K, V> Trace<'gc> for HashMap<K, V>
+where
+    K: Trace<'gc>,
+    V: Trace<'gc>,
+{
+    fn trace(&self, tracer: &Tracer) {
+        for (key, value) in self {
+            key.trace(tracer);
+            value.trace(tracer);
+        }
+    }
+}
+
 pub struct Tracer;
 
 impl Tracer {
     pub fn trace_handle<'gc, T>(&self, handle: &Handle<'gc, T>)
     where
-        T: Trace<'gc>,
+        T: Trace<'gc> + ?Sized,
     {
         if let Some(root) = handle.try_root() {
             if !root.object.is_marked() {
@@ -70,7 +110,7 @@ impl<'gc> Heap<'gc> {
         T: Trace<'gc>,
     {
         let object = Object::new(value);
-        let dyn_object = Rc::clone(&object) as Rc<Object<dyn Trace<'gc>>>;
+        let dyn_object = Rc::clone(&object) as Rc<Object<'gc, dyn Trace<'gc>>>;
         self.objects.borrow_mut().push(dyn_object);
         Root::from_object(object)
     }

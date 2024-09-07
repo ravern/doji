@@ -1,21 +1,9 @@
-use crate::string::String;
+use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
-pub struct Function {
-    path: String,
-    name: String,
-    arity: u8,
-    code: Box<[Instruction]>,
-}
-
-impl Function {
-    pub fn size(&self) -> usize {
-        self.code.len()
-    }
-
-    pub fn instruction(&self, offset: usize) -> Option<Instruction> {
-        self.code.get(offset).copied()
-    }
+pub struct Chunk {
+    pub arity: u8,
+    pub code: Box<[Instruction]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -25,13 +13,12 @@ pub enum Instruction {
     Nil,
     True,
     False,
-    Int(i32),
-    Const(u32),
     List,
     Map,
-    Closure(u32),
     Fiber,
-    String(u32),
+    Int(IntImmediate),
+    Constant(ConstantIndex),
+    Closure(FunctionIndex),
 
     Add,
     Sub,
@@ -52,20 +39,20 @@ pub enum Instruction {
     BitNot,
     BitXor,
 
-    Load(u32),
-    Store(u32),
+    Load(StackSlot),
+    Store(StackSlot),
     Dup,
     Pop,
 
     Test,
-    Jump(u32),
+    Jump(CodeOffset),
 
-    Call(u32),
+    Call(u8),
     Ret,
 
-    UpvalueLoad(u32),
-    UpvalueStore(u32),
-    UpvalueClose(u32),
+    UpvalueLoad(UpvalueIndex),
+    UpvalueStore(UpvalueIndex),
+    UpvalueClose,
 
     FiberResume,
     FiberYield,
@@ -76,24 +63,58 @@ pub enum Instruction {
     ValueAppend,
 }
 
-pub struct FunctionBuilder {
-    path: String,
-    name: String,
+macro_rules! define_operand {
+    ($name:ident) => {
+        #[derive(Clone, Copy, Debug)]
+        pub struct $name(u32);
+
+        impl $name {
+            pub fn as_usize(self) -> usize {
+                self.into()
+            }
+        }
+
+        impl From<usize> for $name {
+            fn from(index: usize) -> $name {
+                $name(index as u32)
+            }
+        }
+
+        impl Into<usize> for $name {
+            fn into(self) -> usize {
+                self.0 as usize
+            }
+        }
+
+        impl Display for $name {
+            fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+                write!(f, "{}", self.0)
+            }
+        }
+    };
+}
+
+define_operand!(CodeOffset);
+define_operand!(IntImmediate);
+define_operand!(FunctionIndex);
+define_operand!(UpvalueIndex);
+define_operand!(StackSlot);
+define_operand!(ConstantIndex);
+
+pub struct ChunkBuilder {
     arity: u8,
     code: Vec<Instruction>,
 }
 
-impl FunctionBuilder {
-    pub fn new(path: String, name: String, arity: u8) -> FunctionBuilder {
-        FunctionBuilder {
-            path,
-            name,
+impl ChunkBuilder {
+    pub fn new(arity: u8) -> ChunkBuilder {
+        ChunkBuilder {
             arity,
             code: Vec::new(),
         }
     }
 
-    pub fn code<I>(mut self, instructions: I) -> FunctionBuilder
+    pub fn code<I>(mut self, instructions: I) -> ChunkBuilder
     where
         I: IntoIterator<Item = Instruction>,
     {
@@ -101,10 +122,8 @@ impl FunctionBuilder {
         self
     }
 
-    pub fn build(self) -> Function {
-        Function {
-            path: self.path,
-            name: self.name,
+    pub fn build(self) -> Chunk {
+        Chunk {
             arity: self.arity,
             code: self.code.into(),
         }

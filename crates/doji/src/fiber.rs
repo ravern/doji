@@ -1,39 +1,52 @@
-use std::rc::Rc;
+use std::env;
 
 use crate::{
-    code::{Function, Instruction},
+    code::{CodeOffset, ConstantIndex, Instruction},
+    env::Environment,
     error::Error,
-    value::Value,
+    value::{Function, Value},
 };
 
 pub struct Fiber<'gc> {
-    function: Rc<Function>,
-    offset: usize,
+    function: Function,
+    code_offset: CodeOffset,
     stack: Stack<'gc>,
+    call_stack: CallStack,
 }
 
 impl<'gc> Fiber<'gc> {
-    pub fn new(function: Rc<Function>) -> Fiber<'gc> {
+    pub fn new(function: Function) -> Fiber<'gc> {
         Fiber {
             function,
-            offset: 0,
+            code_offset: CodeOffset::from(0),
             stack: Stack::new(),
+            call_stack: CallStack::new(),
         }
     }
 
-    pub async fn resume(&mut self) -> Result<Value<'gc>, Error> {
-        while self.offset < self.function.size() {
-            self.step().await?;
+    pub fn with_stack(function: Function, stack: Stack<'gc>) -> Fiber<'gc> {
+        Fiber {
+            function,
+            code_offset: CodeOffset::from(0),
+            stack,
+            call_stack: CallStack::new(),
+        }
+    }
+
+    pub async fn resume(&mut self, env: &Environment<'gc>) -> Result<Value<'gc>, Error> {
+        let code_offset = self.code_offset.as_usize();
+        while code_offset < self.function.size() {
+            self.step(env).await?;
         }
         Ok(self.stack.get(0).unwrap().clone())
     }
 
-    pub async fn step(&mut self) -> Result<(), Error> {
-        let instruction = self.function.instruction(self.offset).unwrap();
-        self.offset += 1;
-
-        match instruction {
-            Instruction::Int(int) => self.stack.push(Value::Int(int as i64)),
+    pub async fn step(&mut self, env: &Environment<'gc>) -> Result<(), Error> {
+        match self.instruction()? {
+            Instruction::Constant(index) => {
+                let constant = self.constant(env, index)?;
+                self.stack.push(constant)
+            }
             Instruction::Add => {
                 let right = self.stack.pop().unwrap();
                 let left = self.stack.pop().unwrap();
@@ -49,30 +62,72 @@ impl<'gc> Fiber<'gc> {
 
         Ok(())
     }
+
+    fn instruction(&self) -> Result<Instruction, Error> {
+        self.function
+            .instruction(self.code_offset)
+            .ok_or_else(|| Error::CodeOffsetOutOfBounds {
+                code_offset: self.code_offset,
+            })
+    }
+
+    fn constant(&self, env: &Environment<'gc>, index: ConstantIndex) -> Result<Value<'gc>, Error> {
+        env.constant(index)
+            .ok_or_else(|| Error::InvalidConstantIndex {
+                code_offset: self.code_offset,
+                index,
+            })
+    }
 }
 
-struct Stack<'gc> {
+struct CallStack {
+    frames: Vec<CallStackFrame>,
+}
+
+struct CallStackFrame {
+    stack_base: usize,
+    code_offset: usize,
+}
+
+impl CallStack {
+    fn new() -> CallStack {
+        CallStack { frames: Vec::new() }
+    }
+
+    fn push(&mut self, stack_base: usize, code_offset: usize) {
+        self.frames.push(CallStackFrame {
+            stack_base,
+            code_offset,
+        });
+    }
+
+    fn pop(&mut self) -> Option<CallStackFrame> {
+        self.frames.pop()
+    }
+}
+
+pub struct Stack<'gc> {
     base: usize,
-    items: Vec<Value<'gc>>,
+    values: Vec<Value<'gc>>,
 }
 
 impl<'gc> Stack<'gc> {
     fn new() -> Stack<'gc> {
         Stack {
             base: 0,
-            items: Vec::new(),
+            values: Vec::new(),
         }
     }
 
     fn get(&self, index: usize) -> Option<&Value<'gc>> {
-        self.items.get(self.base + index)
+        self.values.get(self.base + index)
     }
 
     fn push(&mut self, value: Value<'gc>) {
-        self.items.push(value);
+        self.values.push(value);
     }
 
     fn pop(&mut self) -> Option<Value<'gc>> {
-        self.items.pop()
+        self.values.pop()
     }
 }

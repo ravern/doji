@@ -1,72 +1,38 @@
 use std::{
     collections::HashMap,
     hash::{Hash, Hasher},
-    mem,
     rc::Rc,
 };
 
 use crate::{
-    code::Function,
+    code::{Chunk, CodeOffset, Instruction},
     gc::{Handle, Trace, Tracer},
 };
 
-#[derive(Debug)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
 pub enum Value<'gc> {
     Nil,
     Bool(bool),
     Int(i64),
     Float(Float),
-    Object(Handle<'gc, Object<'gc>>),
-}
-
-impl<'gc> Clone for Value<'gc> {
-    fn clone(&self) -> Self {
-        match self {
-            Value::Nil => Value::Nil,
-            Value::Bool(value) => Value::Bool(*value),
-            Value::Int(value) => Value::Int(*value),
-            Value::Float(value) => Value::Float(*value),
-            Value::Object(handle) => Value::Object(Handle::clone(&handle)),
-        }
-    }
-}
-
-impl<'gc> Eq for Value<'gc> {}
-
-impl<'gc> Hash for Value<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        mem::discriminant(self).hash(state);
-        match self {
-            Value::Nil => 0.hash(state),
-            Value::Bool(value) => value.hash(state),
-            Value::Int(value) => value.hash(state),
-            Value::Float(value) => value.hash(state),
-            Value::Object(handle) => Handle::as_ptr(handle).hash(state),
-        }
-    }
-}
-
-impl<'gc> PartialEq for Value<'gc> {
-    fn eq(&self, other: &Self) -> bool {
-        match (self, other) {
-            (Value::Nil, Value::Nil) => true,
-            (Value::Bool(left), Value::Bool(right)) => left == right,
-            (Value::Int(left), Value::Int(right)) => left == right,
-            (Value::Float(left), Value::Float(right)) => left == right,
-            (Value::Object(left), Value::Object(right)) => Handle::ptr_eq(left, right),
-            _ => false,
-        }
-    }
+    String(String),
+    List(List<'gc>),
+    Map(Map<'gc>),
+    Closure(Closure<'gc>),
 }
 
 impl<'gc> Trace<'gc> for Value<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        if let Value::Object(handle) = self {
-            tracer.trace_handle(handle);
+        match self {
+            Value::Nil | Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::String(_) => {}
+            Value::List(list) => list.trace(tracer),
+            Value::Map(map) => map.trace(tracer),
+            Value::Closure(closure) => closure.trace(tracer),
         }
     }
 }
 
+// FIXME: Should we really be deriving PartialEq here?
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Float(f64);
 
@@ -78,62 +44,129 @@ impl Hash for Float {
     }
 }
 
-#[derive(Debug)]
-pub enum Object<'gc> {
-    String(String),
-    List(List<'gc>),
-    Map(Map<'gc>),
-    Closure(Closure<'gc>),
-}
+#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+pub struct String(Box<str>);
 
-impl<'gc> Trace<'gc> for Object<'gc> {
-    fn trace(&self, tracer: &Tracer) {
-        match self {
-            Object::String(string) => string.trace(tracer),
-            Object::List(list) => list.trace(tracer),
-            Object::Map(map) => map.trace(tracer),
-            Object::Closure(closure) => closure.trace(tracer),
-        }
+#[derive(Debug)]
+pub struct List<'gc>(Handle<'gc, Vec<Value<'gc>>>);
+
+impl<'gc> Clone for List<'gc> {
+    fn clone(&self) -> Self {
+        List(Handle::clone(&self.0))
     }
 }
 
-#[derive(Debug)]
-pub struct List<'gc> {
-    items: Vec<Value<'gc>>,
+impl<'gc> PartialEq for List<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        Handle::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<'gc> Eq for List<'gc> {}
+
+impl<'gc> Hash for List<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Handle::as_ptr(&self.0).hash(state);
+    }
 }
 
 impl<'gc> Trace<'gc> for List<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        for item in &self.items {
-            item.trace(tracer);
-        }
+        tracer.trace_handle(&self.0);
     }
 }
 
 #[derive(Debug)]
-pub struct Map<'gc> {
-    items: HashMap<Value<'gc>, Value<'gc>>,
+pub struct Map<'gc>(Handle<'gc, HashMap<Value<'gc>, Value<'gc>>>);
+
+impl<'gc> Clone for Map<'gc> {
+    fn clone(&self) -> Self {
+        Map(Handle::clone(&self.0))
+    }
+}
+
+impl<'gc> PartialEq for Map<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        Handle::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<'gc> Eq for Map<'gc> {}
+
+impl<'gc> Hash for Map<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Handle::as_ptr(&self.0).hash(state);
+    }
 }
 
 impl<'gc> Trace<'gc> for Map<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        for (key, value) in &self.items {
-            key.trace(tracer);
-            value.trace(tracer);
+        tracer.trace_handle(&self.0);
+    }
+}
+
+#[derive(Debug)]
+pub struct Closure<'gc>(Handle<'gc, ClosureInner<'gc>>);
+
+impl<'gc> Clone for Closure<'gc> {
+    fn clone(&self) -> Self {
+        Closure(Handle::clone(&self.0))
+    }
+}
+
+impl<'gc> PartialEq for Closure<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        Handle::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl<'gc> Eq for Closure<'gc> {}
+
+impl<'gc> Hash for Closure<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Handle::as_ptr(&self.0).hash(state);
+    }
+}
+
+impl<'gc> Trace<'gc> for Closure<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        tracer.trace_handle(&self.0);
+    }
+}
+
+#[derive(Debug)]
+struct ClosureInner<'gc> {
+    function: Function,
+    upvalues: Box<[Upvalue<'gc>]>,
+}
+
+impl<'gc> Trace<'gc> for ClosureInner<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        for upvalue in &*self.upvalues {
+            upvalue.trace(tracer)
         }
     }
 }
 
 #[derive(Debug)]
-pub struct Closure<'gc> {
-    function: Rc<Function>,
-    upvalues: Box<[Upvalue<'gc>]>,
+pub struct Function {
+    chunk: Rc<Chunk>,
 }
 
-impl<'gc> Trace<'gc> for Closure<'gc> {
-    fn trace(&self, tracer: &Tracer) {
-        for upvalue in &*self.upvalues {
-            upvalue.trace(tracer)
+impl Function {
+    pub fn size(&self) -> usize {
+        self.chunk.code.len()
+    }
+
+    pub fn instruction(&self, offset: CodeOffset) -> Option<Instruction> {
+        self.chunk.code.get(offset.as_usize()).copied()
+    }
+}
+
+impl Clone for Function {
+    fn clone(&self) -> Self {
+        Function {
+            chunk: Rc::clone(&self.chunk),
         }
     }
 }

@@ -1,15 +1,30 @@
 use std::rc::Rc;
 
 use crate::{
-    code::{Function, FunctionBuilder, Instruction},
+    code::{Chunk, ChunkBuilder, ConstantIndex, Instruction},
     env::Environment,
     error::Error,
+    value::Value,
 };
 
-fn compile<'gc>(env: &mut Environment<'gc>, source: &str) -> Result<Rc<Function>, Error> {
-    Ok(Rc::new(
-        FunctionBuilder::new("a".into(), "b".into(), 0)
-            .code([Instruction::Int(12), Instruction::Int(34), Instruction::Add])
-            .build(),
-    ))
+pub struct Compiler {}
+
+impl Compiler {
+    fn compile<'gc>(
+        &mut self,
+        env: &mut Environment<'gc>,
+        source: &str,
+    ) -> Result<Rc<Chunk>, Error> {
+        let index_two = env.add_constant(Value::Int(2));
+        let index_four = env.add_constant(Value::Int(4));
+        Ok(Rc::new(
+            ChunkBuilder::new(0)
+                .code([
+                    Instruction::Constant(ConstantIndex::from(index_two)),
+                    Instruction::Constant(ConstantIndex::from(index_four)),
+                    Instruction::Add,
+                ])
+                .build(),
+        ))
+    }
 }
