@@ -225,4 +225,34 @@ mod tests {
             "runtime error: src/main.doji:main:399: invalid type: expected int, float, received bool"
         );
     }
+
+    #[test]
+    fn display_operand_width_exceeded() {
+        let context = RuntimeErrorContext {
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
+        };
+        let error = RuntimeError::operand_width_exceeded(context);
+
+        assert_eq!(
+            error.to_string(),
+            "runtime error: src/main.doji:main:399: operand width exceeded"
+        );
+    }
+
+    #[test]
+    fn display_stack_underflow() {
+        let context = RuntimeErrorContext {
+            module_path: "src/main.doji".into(),
+            chunk_name: "main".into(),
+            bytecode_offset: 399,
+        };
+        let error = RuntimeError::stack_underflow(context);
+
+        assert_eq!(
+            error.to_string(),
+            "runtime error: src/main.doji:main:399: stack underflow"
+        );
+    }
 }

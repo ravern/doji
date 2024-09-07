@@ -2,9 +2,10 @@ use std::{
     collections::HashMap,
     fmt,
     hash::{Hash, Hasher},
+    mem,
 };
 
-use doji_bytecode::Constant;
+use doji_program::Constant;
 
 use crate::gc::{Handle, Heap, Trace, Tracer};
 
@@ -88,6 +89,7 @@ impl<'gc> Eq for Value<'gc> {}
 
 impl<'gc> Hash for Value<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
+        mem::discriminant(&self).hash(state);
         match self {
             Value::Nil => 0.hash(state),
             Value::Bool(value) => value.hash(state),

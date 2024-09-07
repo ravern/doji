@@ -1,6 +1,6 @@
 use std::ops::{Add, Div, Mul, Rem, Sub};
 
-use doji_bytecode::{opcode::*, Chunk, Constant, Program, OPERAND_WIDTH};
+use doji_program::{opcode::*, Chunk, Constant, Program, MAX_OPERAND_WIDTH};
 
 use crate::{
     error::{RuntimeError, RuntimeErrorContext},
@@ -10,7 +10,7 @@ use crate::{
 
 pub struct Fiber<'gc> {
     chunk_index: usize,
-    acc_operand: usize,
+    acc_operand: u64,
     num_operand_exts: usize,
     bytecode_offset: usize,
     stack: FiberStack<'gc>,
@@ -27,7 +27,11 @@ impl<'gc> Fiber<'gc> {
         }
     }
 
-    pub async fn run(&mut self, program: &Program, heap: &Heap<'gc>) -> Result<(), RuntimeError> {
+    pub async fn resume(
+        &mut self,
+        program: &Program,
+        heap: &Heap<'gc>,
+    ) -> Result<(), RuntimeError> {
         let chunk = self.chunk(program);
         while self.bytecode_offset < chunk.size() {
             self.step(program, heap).await?;
@@ -83,8 +87,8 @@ impl<'gc> Fiber<'gc> {
             OP_TRUE => self.stack.push(Value::Bool(true)),
             OP_FALSE => self.stack.push(Value::Bool(false)),
             OP_INT => {
-                self.stack
-                    .push(Value::Int(i64::from_ne_bytes(operand.to_ne_bytes())));
+                let int = transmute_usize_to_i64(operand);
+                self.stack.push(Value::Int(int));
             }
             OP_CONST => {
                 let constant = self.constant(program, operand)?;
@@ -204,6 +208,11 @@ impl<'gc> FiberStack<'gc> {
     }
 }
 
+fn transmute_usize_to_i64(value: usize) -> i64 {
+    let bytes = (value as u64).to_ne_bytes();
+    i64::from_ne_bytes(bytes)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -211,7 +220,7 @@ mod tests {
     fn run<'gc>(heap: &Heap<'gc>, program: &Program) -> Value<'gc> {
         smol::block_on(async {
             let mut fiber = Fiber::new(0);
-            fiber.run(&program, &heap).await.unwrap();
+            fiber.resume(&program, &heap).await.unwrap();
             fiber.stack.get(0)
         })
         .expect("fiber stack empty after running")

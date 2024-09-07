@@ -1,0 +1,62 @@
+#[derive(Clone, Copy, Debug)]
+#[repr(u8)]
+pub enum Opcode {
+    Noop = 0x0,
+    Double = 0x01,
+    Quad = 0x02,
+
+    Nil = 0x10,
+    True = 0x11,
+    False = 0x12,
+    Int = 0x13,
+    List = 0x14,
+    Map = 0x15,
+    Closure = 0x16,
+    Fiber = 0x17,
+
+    ConstInt = 0x20,
+    ConstFloat = 0x21,
+    ConstString = 0x22,
+
+    Add = 0x30,
+    Sub = 0x31,
+    Mul = 0x32,
+    Div = 0x33,
+    Rem = 0x34,
+    Eq = 0x35,
+    Gt = 0x36,
+    Gte = 0x37,
+    Lt = 0x38,
+    Lte = 0x39,
+    And = 0x3A,
+    Or = 0x3B,
+    Neg = 0x3C,
+    Not = 0x3D,
+    BitAnd = 0x3E,
+    BitOr = 0x3F,
+    BitNot = 0x40,
+    BitXor = 0x41,
+
+    Load = 0x50,
+    Store = 0x51,
+    Dup = 0x52,
+    Pop = 0x53,
+
+    Test = 0x60,
+    Jump = 0x61,
+
+    Call = 0x70,
+    Ret = 0x71,
+
+    UpvalueLoad = 0x80,
+    UpvalueStore = 0x81,
+    UpvalueClose = 0x82,
+
+    FiberResume = 0x90,
+    FiberYield = 0x91,
+
+    ValueLen = 0xA0,
+    ValueGet = 0xA1,
+    ValueSet = 0xA2,
+    ValueAppend = 0xA3,
+}
