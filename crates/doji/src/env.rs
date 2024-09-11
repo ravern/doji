@@ -24,7 +24,7 @@ impl<'gc> Environment<'gc> {
         self.modules.register(path, module);
     }
 
-    pub fn module(&self, path: &String) -> Option<Value> {
+    pub fn module(&self, path: &String) -> Option<Value<'gc>> {
         self.modules.get(path)
     }
 

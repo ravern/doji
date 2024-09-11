@@ -41,14 +41,14 @@ pub enum Instruction {
 
     Load(StackSlot),
     Store(StackSlot),
-    Dup,
+    Duplicate,
     Pop,
 
     Test,
     Jump(CodeOffset),
 
     Call(u8),
-    Ret,
+    Return,
 
     UpvalueLoad(UpvalueIndex),
     UpvalueStore(UpvalueIndex),
