@@ -12,7 +12,7 @@ pub struct Environment<'gc> {
 }
 
 impl<'gc> Environment<'gc> {
-    pub fn new() -> Environment<'static> {
+    pub fn new() -> Environment<'gc> {
         Environment {
             modules: ModuleRegistry::new(),
             constants: ConstantPool::new(),
@@ -98,7 +98,11 @@ impl<'gc> ConstantPool<'gc> {
     }
 
     fn get(&self, index: ConstantIndex) -> Option<Value<'gc>> {
-        self.inner.borrow().constants.get(index.as_usize()).cloned()
+        self.inner
+            .borrow()
+            .constants
+            .get(index.into_usize())
+            .cloned()
     }
 }
 
@@ -122,6 +126,6 @@ impl FunctionPool {
 
     fn get(&self, index: FunctionIndex) -> Option<Function> {
         let functions = self.functions.borrow();
-        functions.get(index.as_usize()).cloned()
+        functions.get(index.into_usize()).cloned()
     }
 }

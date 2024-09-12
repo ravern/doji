@@ -1,25 +1,28 @@
 use crate::{
     code::{CodeOffset, ConstantIndex, Instruction, StackSlot},
     env::Environment,
-    error::Error,
+    error::{Error, ErrorContext, ErrorKind},
     gc::Heap,
-    value::{Float, Function, List, Map, Value, ValueType},
+    value::{Closure, Function, Value, ValueType, WrongTypeError},
 };
 
 pub struct Fiber<'gc> {
     function: Function,
     code_offset: CodeOffset,
     stack: Stack<'gc>,
-    call_stack: CallStack,
+}
+
+enum FiberStep<'gc> {
+    Step,
+    Done(Value<'gc>),
 }
 
 impl<'gc> Fiber<'gc> {
-    pub fn new(function: Function) -> Fiber<'gc> {
+    pub fn allocate(heap: &Heap<'gc>, function: Function) -> Fiber<'gc> {
         Fiber {
-            function,
+            function: function.clone(),
             code_offset: CodeOffset::from(0),
-            stack: Stack::new(),
-            call_stack: CallStack::new(),
+            stack: Stack::new(Value::Closure(Closure::allocate(heap, function))),
         }
     }
 
@@ -28,140 +31,51 @@ impl<'gc> Fiber<'gc> {
             function,
             code_offset: CodeOffset::from(0),
             stack,
-            call_stack: CallStack::new(),
         }
     }
 
-    pub async fn resume(
+    pub async fn run(
         &mut self,
         env: &Environment<'gc>,
         heap: &Heap<'gc>,
     ) -> Result<Value<'gc>, Error> {
-        let code_offset = self.code_offset.as_usize();
-        while code_offset < self.function.size() {
-            self.step(env, heap).await?;
+        loop {
+            match self.step(env, heap).await? {
+                FiberStep::Step => {}
+                FiberStep::Done(value) => return Ok(value),
+            }
         }
-        Ok(self.stack.get(0.into()).unwrap().clone())
     }
 
-    pub async fn step(&mut self, env: &Environment<'gc>, heap: &Heap<'gc>) -> Result<(), Error> {
-        macro_rules! bool_op {
-            ($op:tt) => {{
-                let right = self.stack.pop().unwrap();
-                let left = self.stack.pop().unwrap();
-                match (left, right) {
-                    (Value::Bool(left), Value::Bool(right)) => {
-                        let result = left $op right;
-                        self.stack.push(Value::Bool(result));
-                    }
-                    (Value::Bool(_), value) | (value, _) => {
-                        return Err(Error::WrongType {
-                            code_offset: self.code_offset,
-                            expected: [ValueType::Bool].into(),
-                            found: value.ty(),
-                        });
-                    },
-                }
-            }};
-        }
-
-        macro_rules! int_op {
-            ($op:tt) => {{
+    async fn step(
+        &mut self,
+        env: &Environment<'gc>,
+        heap: &Heap<'gc>,
+    ) -> Result<FiberStep<'gc>, Error> {
+        macro_rules! binary_op {
+            ($op:ident) => {{
                 let right = self.stack_pop()?;
                 let left = self.stack_pop()?;
-                match (left, right) {
-                    (Value::Int(left), Value::Int(right)) => {
-                        let result = left $op right;
-                        self.stack.push(Value::Int(result));
-                    }
-                    (Value::Int(_), value) | (value, _) => {
-                        return Err(Error::WrongType {
-                            code_offset: self.code_offset,
-                            expected: [ValueType::Int].into(),
-                            found: value.ty(),
-                        });
-                    },
-                }
+                let result = left
+                    .$op(&right)
+                    .map_err(|error| self.error(ErrorKind::WrongType(error)))?;
+                self.stack.push(result);
             }};
         }
 
-        macro_rules! float_op {
-            ($op:tt, $res:ident) => {
-                float_op!($op, $res, $res)
-            };
-            ($op:tt, $int_res:ident, $float_res:ident) => {{
-                let right = self.stack.pop().unwrap();
-                let left = self.stack.pop().unwrap();
-                match (left, right) {
-                    (Value::Int(left), Value::Int(right)) => {
-                        let result = left $op right;
-                        self.stack.push(Value::$int_res(result));
-                    }
-                    (Value::Float(left), Value::Float(right)) => {
-                        let result = left.as_f64() $op right.as_f64();
-                        self.stack.push(Value::$float_res(result.into()));
-                    }
-                    (Value::Int(left), Value::Float(right)) => {
-                        let result = (left as f64) $op right.as_f64();
-                        self.stack.push(Value::$float_res(result.into()));
-                    }
-                    (Value::Float(left), Value::Int(right)) => {
-                        let result = left.as_f64() $op right as f64;
-                        self.stack.push(Value::$float_res(result.into()));
-                    }
-                    (Value::Int(_), value) | (Value::Float(_), value) | (value, _) => {
-                        return Err(Error::WrongType {
-                            code_offset: self.code_offset,
-                            expected: [ValueType::Int, ValueType::Float].into(),
-                            found: value.ty(),
-                        });
-                    },
-                }
+        macro_rules! unary_op {
+            ($op:ident) => {{
+                let value = self.stack_pop()?;
+                let result = value
+                    .$op()
+                    .map_err(|error| self.error(ErrorKind::WrongType(error)))?;
+                self.stack.push(result);
             }};
         }
 
-        macro_rules! simple_op {
-            ($op:tt) => {{
-                let right = self.stack.pop().unwrap();
-                let left = self.stack.pop().unwrap();
-                self.stack.push(Value::Bool(left $op right));
-            }};
-        }
-
-        macro_rules! unary_float_op {
-            ($op:tt) => {{
-                let value = self.stack.pop().unwrap();
-                match value {
-                    Value::Int(value) => self.stack.push(Value::Int($op value)),
-                    Value::Float(value) => self.stack.push(Value::Float(($op value.as_f64()).into())),
-                    value => {
-                        return Err(Error::WrongType {
-                            code_offset: self.code_offset,
-                            expected: [ValueType::Int, ValueType::Float].into(),
-                            found: value.ty(),
-                        });
-                    }
-                }
-            }};
-        }
-
-        macro_rules! unary_bool_op {
-            ($op:tt) => {{
-                let value = self.stack.pop().unwrap();
-                match value {
-                    Value::Bool(value) => self.stack.push(Value::Bool($op value)),
-                    value => {
-                        return Err(Error::WrongType {
-                            code_offset: self.code_offset,
-                            expected: [ValueType::Bool].into(),
-                            found: value.ty(),
-                        });
-                    }
-                }
-            }};
-        }
-
-        match self.instruction()? {
+        let instruction = self.instruction()?;
+        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+        match instruction {
             Instruction::Noop => {}
 
             Instruction::Nil => self.stack.push(Value::Nil),
@@ -176,23 +90,27 @@ impl<'gc> Fiber<'gc> {
             }
             Instruction::Closure(_) => todo!(),
 
-            Instruction::Add => float_op!(+, Int, Float),
-            Instruction::Sub => float_op!(-, Int, Float),
-            Instruction::Mul => float_op!(*, Int, Float),
-            Instruction::Div => float_op!(/, Int, Float),
-            Instruction::Rem => int_op!(%),
-            Instruction::Eq => simple_op!(==),
-            Instruction::Gt => float_op!(>, Bool),
-            Instruction::Gte => float_op!(>=, Bool),
-            Instruction::Lt => float_op!(<, Bool),
-            Instruction::Lte => float_op!(<=, Bool),
-            Instruction::And => bool_op!(&&),
-            Instruction::Or => bool_op!(||),
-            Instruction::Neg => unary_float_op!(-),
-            Instruction::Not => unary_bool_op!(!),
-            Instruction::BitAnd => int_op!(&),
-            Instruction::BitOr => int_op!(|),
-            Instruction::BitXor => int_op!(^),
+            Instruction::Add => binary_op!(add),
+            Instruction::Sub => binary_op!(sub),
+            Instruction::Mul => binary_op!(mul),
+            Instruction::Div => binary_op!(div),
+            Instruction::Rem => binary_op!(rem),
+            Instruction::Eq => {
+                let right = self.stack_pop()?;
+                let left = self.stack_pop()?;
+                self.stack.push(Value::Bool(left == right));
+            }
+            Instruction::Gt => binary_op!(gt),
+            Instruction::Gte => binary_op!(gte),
+            Instruction::Lt => binary_op!(lt),
+            Instruction::Lte => binary_op!(lte),
+            Instruction::And => binary_op!(and),
+            Instruction::Or => binary_op!(or),
+            Instruction::Neg => unary_op!(neg),
+            Instruction::Not => unary_op!(not),
+            Instruction::BitAnd => binary_op!(bit_and),
+            Instruction::BitOr => binary_op!(bit_or),
+            Instruction::BitXor => binary_op!(bit_xor),
 
             Instruction::Load(slot) => self.stack.push(self.stack_get(slot)?),
             Instruction::Store(slot) => {
@@ -208,101 +126,133 @@ impl<'gc> Fiber<'gc> {
                 self.stack_pop()?;
             }
 
-            Instruction::Test => todo!(),
+            Instruction::Test => {
+                let value = self.stack_pop()?;
+                if let Value::Bool(condition) = value {
+                    if condition {
+                        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+                    }
+                } else {
+                    return Err(self.error(ErrorKind::WrongType(WrongTypeError {
+                        expected: [ValueType::Bool].into(),
+                        found: value.ty(),
+                    })));
+                }
+            }
             Instruction::Jump(offset) => {
                 self.code_offset = offset;
-                return Ok(());
             }
 
-            _ => panic!("Unknown instruction"),
+            Instruction::Call(arity) => {
+                let value_slot = StackSlot::from(self.stack.size() - (arity as usize) - 1);
+                let value = self.stack_get(value_slot)?;
+                if let Value::Closure(closure) = value {
+                    if closure.arity() != arity {
+                        return Err(self.error(ErrorKind::WrongArity {
+                            expected: closure.arity(),
+                            found: arity,
+                        }));
+                    }
+                    self.stack_push_frame(arity);
+                } else {
+                    return Err(self.error(ErrorKind::WrongType(WrongTypeError {
+                        expected: [ValueType::Closure].into(),
+                        found: value.ty(),
+                    })));
+                }
+            }
+            Instruction::Return => {
+                if let Some(offset) = self.stack.pop_frame() {
+                    self.code_offset = offset;
+                } else {
+                    return Ok(FiberStep::Done(self.stack_pop()?));
+                }
+            }
+
+            Instruction::FiberYield => {
+                smol::future::yield_now().await;
+            }
+
+            _ => todo!(),
         }
 
-        Ok(())
+        Ok(FiberStep::Step)
     }
 
     fn stack_set(&mut self, slot: StackSlot, value: Value<'gc>) -> Result<(), Error> {
         self.stack
             .set(slot, value)
-            .ok_or_else(|| Error::InvalidStackSlot {
-                code_offset: self.code_offset,
-                slot,
-            })?;
+            .ok_or_else(|| self.error(ErrorKind::InvalidStackSlot(slot)))?;
         Ok(())
     }
 
     fn stack_get(&self, slot: StackSlot) -> Result<Value<'gc>, Error> {
-        self.stack.get(slot).ok_or_else(|| Error::InvalidStackSlot {
-            code_offset: self.code_offset,
-            slot,
-        })
+        self.stack
+            .get(slot)
+            .ok_or_else(|| self.error(ErrorKind::InvalidStackSlot(slot)))
     }
 
     fn stack_pop(&mut self) -> Result<Value<'gc>, Error> {
-        self.stack.pop().ok_or_else(|| Error::StackUnderflow {
-            code_offset: self.code_offset,
-        })
+        self.stack
+            .pop()
+            .ok_or_else(|| self.error(ErrorKind::StackUnderflow))
+    }
+
+    fn stack_push_frame(&mut self, arity: u8) {
+        self.stack.push_frame(arity, self.code_offset.into_usize());
+        self.code_offset = CodeOffset::from(0);
     }
 
     fn instruction(&self) -> Result<Instruction, Error> {
         self.function
             .instruction(self.code_offset)
-            .ok_or_else(|| Error::CodeOffsetOutOfBounds {
-                code_offset: self.code_offset,
-            })
+            .ok_or_else(|| self.error(ErrorKind::CodeOffsetOutOfBounds))
     }
 
     fn constant(&self, env: &Environment<'gc>, index: ConstantIndex) -> Result<Value<'gc>, Error> {
         env.constant(index)
-            .ok_or_else(|| Error::InvalidConstantIndex {
-                code_offset: self.code_offset,
-                index,
-            })
-    }
-}
-
-struct CallStack {
-    frames: Vec<CallStackFrame>,
-}
-
-struct CallStackFrame {
-    stack_base: usize,
-    code_offset: usize,
-}
-
-impl CallStack {
-    fn new() -> CallStack {
-        CallStack { frames: Vec::new() }
+            .ok_or_else(|| self.error(ErrorKind::InvalidConstantIndex(index)))
     }
 
-    fn push(&mut self, frame: CallStackFrame) {
-        self.frames.push(frame);
-    }
-
-    fn pop(&mut self) -> Option<CallStackFrame> {
-        self.frames.pop()
+    fn error(&self, kind: ErrorKind) -> Error {
+        let context = ErrorContext {
+            code_offset: CodeOffset::from(self.code_offset.into_usize() - 1),
+        };
+        Error::new(context, kind)
     }
 }
 
 pub struct Stack<'gc> {
     base: usize,
     values: Vec<Value<'gc>>,
+    frames: Vec<StackFrame>,
+}
+
+struct StackFrame {
+    stack_base: usize,
+    code_offset: usize,
 }
 
 impl<'gc> Stack<'gc> {
-    fn new() -> Stack<'gc> {
+    fn new(initial: Value<'gc>) -> Stack<'gc> {
         Stack {
             base: 0,
-            values: Vec::new(),
+            values: vec![initial],
+            frames: Vec::new(),
         }
     }
 
+    fn size(&self) -> usize {
+        self.values.len()
+    }
+
     fn get(&self, slot: StackSlot) -> Option<Value<'gc>> {
-        self.values.get(self.base + slot.as_usize()).cloned()
+        self.values.get(self.base + slot.into_usize()).cloned()
     }
 
     fn set(&mut self, slot: StackSlot, value: Value<'gc>) -> Option<Value<'gc>> {
         self.values
-            .get_mut(self.base + slot.as_usize())
+            .get_mut(self.base + slot.into_usize())
             .map(|slot_value| {
                 *slot_value = value.clone();
                 value
@@ -315,5 +265,23 @@ impl<'gc> Stack<'gc> {
 
     fn pop(&mut self) -> Option<Value<'gc>> {
         self.values.pop()
+    }
+
+    fn push_frame(&mut self, arity: u8, code_offset: usize) {
+        self.frames.push(StackFrame {
+            stack_base: self.base,
+            code_offset,
+        });
+        self.base = self.values.len() - (arity as usize) - 1;
+    }
+
+    fn pop_frame(&mut self) -> Option<CodeOffset> {
+        let frame = self.frames.pop();
+        if let Some(frame) = frame {
+            self.base = frame.stack_base;
+            Some(CodeOffset::from(frame.code_offset))
+        } else {
+            None
+        }
     }
 }

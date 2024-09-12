@@ -11,31 +11,61 @@ use crate::{
     gc::{Handle, Heap, Trace, Tracer},
 };
 
-#[derive(Clone, Debug)]
-pub enum ValueType {
-    Nil,
-    Bool,
-    Int,
-    Float,
-    String,
-    List,
-    Map,
-    Closure,
+macro_rules! define_float_op {
+    ($name:ident, $op:tt, $res:ident) => {
+        define_float_op!($name, $op, $res, $res);
+    };
+    ($name:ident, $op:tt, $res_int:ident, $res_float:ident) => {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+            match (self, other) {
+                (Value::Int(left), Value::Int(right)) => Ok(Value::$res_int(left $op right)),
+                (Value::Int(left), Value::Float(right)) => {
+                    let result = (*left as f64) $op right.into_f64();
+                    Ok(Value::$res_float(result.into()))
+                }
+                (Value::Float(left), Value::Int(right)) => {
+                    let result = left.into_f64() $op (*right as f64);
+                    Ok(Value::$res_float(result.into()))
+                }
+                (Value::Float(left), Value::Float(right)) => {
+                    let result = left.into_f64() $op right.into_f64();
+                    Ok(Value::$res_float(result.into()))
+                }
+                (Value::Int(_), value) | (Value::Float(_), value) | (value, _) => Err(WrongTypeError {
+                    expected: [ValueType::Int, ValueType::Float].into(),
+                    found: value.ty(),
+                }),
+            }
+        }
+    };
 }
 
-impl Display for ValueType {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            ValueType::Nil => write!(f, "nil"),
-            ValueType::Bool => write!(f, "bool"),
-            ValueType::Int => write!(f, "int"),
-            ValueType::Float => write!(f, "float"),
-            ValueType::String => write!(f, "string"),
-            ValueType::List => write!(f, "list"),
-            ValueType::Map => write!(f, "map"),
-            ValueType::Closure => write!(f, "closure"),
+macro_rules! define_int_op {
+    ($name:ident, $op:tt) => {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+            match (self, other) {
+                (Value::Int(left), Value::Int(right)) => Ok(Value::Int(left $op right)),
+                (Value::Int(_), value) | (value, _) => Err(WrongTypeError {
+                    expected: [ValueType::Int].into(),
+                    found: value.ty(),
+                }),
+            }
         }
-    }
+    };
+}
+
+macro_rules! define_bool_op {
+    ($name:ident, $op:tt) => {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+            match (self, other) {
+                (Value::Bool(left), Value::Bool(right)) => Ok(Value::Bool(*left $op *right)),
+                (Value::Bool(_), value) | (value, _) => Err(WrongTypeError {
+                    expected: [ValueType::Bool].into(),
+                    found: value.ty(),
+                }),
+            }
+        }
+    };
 }
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
@@ -75,6 +105,42 @@ impl<'gc> Value<'gc> {
             Value::Closure(_) => ValueType::Closure,
         }
     }
+
+    define_float_op!(add, +, Int, Float);
+    define_float_op!(sub, -, Int, Float);
+    define_float_op!(mul, *, Int, Float);
+    define_float_op!(div, /, Int, Float);
+    define_int_op!(rem, %);
+    define_float_op!(gt, >, Bool);
+    define_float_op!(gte, >=, Bool);
+    define_float_op!(lt, <, Bool);
+    define_float_op!(lte, <=, Bool);
+    define_bool_op!(and, &&);
+    define_bool_op!(or, &&);
+    define_int_op!(bit_and, &);
+    define_int_op!(bit_or, |);
+    define_int_op!(bit_xor, ^);
+
+    pub fn neg(&self) -> Result<Value<'gc>, WrongTypeError> {
+        match self {
+            Value::Int(value) => Ok(Value::Int(-value)),
+            Value::Float(value) => Ok(Value::Float(Float::from(-value.into_f64()))),
+            value => Err(WrongTypeError {
+                expected: [ValueType::Int, ValueType::Float].into(),
+                found: value.ty(),
+            }),
+        }
+    }
+
+    pub fn not(&self) -> Result<Value<'gc>, WrongTypeError> {
+        match self {
+            Value::Bool(value) => Ok(Value::Bool(!value)),
+            value => Err(WrongTypeError {
+                expected: [ValueType::Bool].into(),
+                found: value.ty(),
+            }),
+        }
+    }
 }
 
 impl<'gc> Trace<'gc> for Value<'gc> {
@@ -93,11 +159,7 @@ impl<'gc> Trace<'gc> for Value<'gc> {
 pub struct Float(f64);
 
 impl Float {
-    pub fn from_f64(value: f64) -> Float {
-        Float(value)
-    }
-
-    pub fn as_f64(self) -> f64 {
+    pub fn into_f64(self) -> f64 {
         self.0
     }
 }
@@ -212,6 +274,23 @@ pub struct Closure<'gc> {
     inner: Handle<'gc, ClosureInner<'gc>>,
 }
 
+impl<'gc> Closure<'gc> {
+    pub fn allocate(heap: &Heap<'gc>, function: Function) -> Closure<'gc> {
+        Closure {
+            inner: heap
+                .allocate(ClosureInner {
+                    function,
+                    upvalues: [].into(),
+                })
+                .as_handle(),
+        }
+    }
+
+    pub fn arity(&self) -> u8 {
+        self.inner.root().function.chunk.arity
+    }
+}
+
 impl<'gc> Clone for Closure<'gc> {
     fn clone(&self) -> Self {
         Closure {
@@ -260,12 +339,18 @@ pub struct Function {
 }
 
 impl Function {
+    pub fn new(chunk: Chunk) -> Function {
+        Function {
+            chunk: Rc::new(chunk),
+        }
+    }
+
     pub fn size(&self) -> usize {
         self.chunk.code.len()
     }
 
     pub fn instruction(&self, offset: CodeOffset) -> Option<Instruction> {
-        self.chunk.code.get(offset.as_usize()).copied()
+        self.chunk.code.get(offset.into_usize()).copied()
     }
 }
 
@@ -288,6 +373,69 @@ impl<'gc> Trace<'gc> for Upvalue<'gc> {
         match self {
             Upvalue::Open(_) => {}
             Upvalue::Closed(handle) => tracer.trace_handle(handle),
+        }
+    }
+}
+
+#[derive(Debug)]
+pub struct WrongTypeError {
+    pub expected: ValueTypes,
+    pub found: ValueType,
+}
+
+impl Display for WrongTypeError {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(
+            f,
+            "wrong type: expected one of {}, found {}",
+            self.expected, self.found
+        )
+    }
+}
+
+#[derive(Debug)]
+pub struct ValueTypes(Box<[ValueType]>);
+
+impl<const N: usize> From<[ValueType; N]> for ValueTypes {
+    fn from(types: [ValueType; N]) -> ValueTypes {
+        ValueTypes(types.into())
+    }
+}
+
+impl Display for ValueTypes {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        self.0
+            .into_iter()
+            .map(ToString::to_string)
+            .collect::<Box<[_]>>()
+            .join(", ")
+            .fmt(f)
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum ValueType {
+    Nil,
+    Bool,
+    Int,
+    Float,
+    String,
+    List,
+    Map,
+    Closure,
+}
+
+impl Display for ValueType {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            ValueType::Nil => write!(f, "nil"),
+            ValueType::Bool => write!(f, "bool"),
+            ValueType::Int => write!(f, "int"),
+            ValueType::Float => write!(f, "float"),
+            ValueType::String => write!(f, "string"),
+            ValueType::List => write!(f, "list"),
+            ValueType::Map => write!(f, "map"),
+            ValueType::Closure => write!(f, "closure"),
         }
     }
 }

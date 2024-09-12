@@ -54,7 +54,6 @@ pub enum Instruction {
     UpvalueStore(UpvalueIndex),
     UpvalueClose,
 
-    FiberResume,
     FiberYield,
 
     ValueLen,
@@ -69,7 +68,7 @@ macro_rules! define_operand {
         pub struct $name(u32);
 
         impl $name {
-            pub fn as_usize(self) -> usize {
+            pub fn into_usize(self) -> usize {
                 self.into()
             }
         }

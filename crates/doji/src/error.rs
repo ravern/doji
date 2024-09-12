@@ -1,56 +1,59 @@
 use std::fmt::{self, Display, Formatter};
 
-use thiserror::Error;
-
 use crate::{
     code::{CodeOffset, ConstantIndex, StackSlot},
-    value::ValueType,
+    value::WrongTypeError,
 };
 
-#[derive(Debug, Error)]
-pub enum Error {
-    #[error("{code_offset}: code offset out of bounds")]
-    CodeOffsetOutOfBounds { code_offset: CodeOffset },
+#[derive(Debug)]
+pub struct Error {
+    context: ErrorContext,
+    kind: ErrorKind,
+}
 
-    #[error("{code_offset}: stack underflow")]
-    StackUnderflow { code_offset: CodeOffset },
+impl Error {
+    pub fn new(context: ErrorContext, kind: ErrorKind) -> Error {
+        Error { context, kind }
+    }
 
-    #[error("{code_offset}: invalid stack slot: {slot}")]
-    InvalidStackSlot {
-        code_offset: CodeOffset,
-        slot: StackSlot,
-    },
+    pub fn context(&self) -> &ErrorContext {
+        &self.context
+    }
 
-    #[error("{code_offset}: invalid constant index: {index}")]
-    InvalidConstantIndex {
-        code_offset: CodeOffset,
-        index: ConstantIndex,
-    },
+    pub fn kind(&self) -> &ErrorKind {
+        &self.kind
+    }
+}
 
-    #[error("{code_offset}: wrong type, expected {expected}, found {found}")]
-    WrongType {
-        code_offset: CodeOffset,
-        expected: ValueTypes,
-        found: ValueType,
-    },
+impl Display for Error {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}: ", self.context.code_offset)?;
+        match &self.kind {
+            ErrorKind::CodeOffsetOutOfBounds => write!(f, "code offset out of bounds"),
+            ErrorKind::StackUnderflow => write!(f, "stack underflow"),
+            ErrorKind::InvalidStackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
+            ErrorKind::InvalidConstantIndex(index) => {
+                write!(f, "invalid constant index: {}", index)
+            }
+            ErrorKind::WrongType(error) => write!(f, "{}", error),
+            ErrorKind::WrongArity { expected, found } => {
+                write!(f, "wrong arity: expected {}, found {}", expected, found)
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
-pub struct ValueTypes(Box<[ValueType]>);
-
-impl<const N: usize> From<[ValueType; N]> for ValueTypes {
-    fn from(types: [ValueType; N]) -> ValueTypes {
-        ValueTypes(types.into())
-    }
+pub struct ErrorContext {
+    pub code_offset: CodeOffset,
 }
 
-impl Display for ValueTypes {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        self.0
-            .into_iter()
-            .map(ToString::to_string)
-            .collect::<Box<[String]>>()
-            .join(", ")
-            .fmt(f)
-    }
+#[derive(Debug)]
+pub enum ErrorKind {
+    CodeOffsetOutOfBounds,
+    StackUnderflow,
+    InvalidStackSlot(StackSlot),
+    InvalidConstantIndex(ConstantIndex),
+    WrongType(WrongTypeError),
+    WrongArity { expected: u8, found: u8 },
 }
