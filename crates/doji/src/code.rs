@@ -53,13 +53,6 @@ pub enum Instruction {
     UpvalueLoad(UpvalueIndex),
     UpvalueStore(UpvalueIndex),
     UpvalueClose,
-
-    FiberYield,
-
-    ValueLen,
-    ValueGet,
-    ValueSet,
-    ValueAppend,
 }
 
 macro_rules! define_operand {

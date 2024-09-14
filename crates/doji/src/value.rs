@@ -8,6 +8,8 @@ use std::{
 
 use crate::{
     code::{Chunk, CodeOffset, Instruction},
+    env::Environment,
+    fiber::Fiber,
     gc::{Handle, Heap, Trace, Tracer},
 };
 
@@ -78,6 +80,8 @@ pub enum Value<'gc> {
     List(List<'gc>),
     Map(Map<'gc>),
     Closure(Closure<'gc>),
+    Fiber(Fiber<'gc>),
+    // NativeFunction(NativeFunction),
 }
 
 impl<'gc> Value<'gc> {
@@ -93,6 +97,10 @@ impl<'gc> Value<'gc> {
         Value::Map(Map::allocate(heap))
     }
 
+    pub fn allocate_closure(heap: &Heap<'gc>, function: Function) -> Value<'gc> {
+        Value::Closure(Closure::allocate(heap, function))
+    }
+
     pub fn ty(&self) -> ValueType {
         match self {
             Value::Nil => ValueType::Nil,
@@ -103,6 +111,7 @@ impl<'gc> Value<'gc> {
             Value::List(_) => ValueType::List,
             Value::Map(_) => ValueType::Map,
             Value::Closure(_) => ValueType::Closure,
+            Value::Fiber(_) => ValueType::Fiber,
         }
     }
 
@@ -120,6 +129,10 @@ impl<'gc> Value<'gc> {
     define_int_op!(bit_and, &);
     define_int_op!(bit_or, |);
     define_int_op!(bit_xor, ^);
+
+    pub fn eq(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+        Ok(Value::Bool(self == other))
+    }
 
     pub fn neg(&self) -> Result<Value<'gc>, WrongTypeError> {
         match self {
@@ -150,6 +163,7 @@ impl<'gc> Trace<'gc> for Value<'gc> {
             Value::List(list) => list.trace(tracer),
             Value::Map(map) => map.trace(tracer),
             Value::Closure(closure) => closure.trace(tracer),
+            Value::Fiber(fiber) => fiber.trace(tracer),
         }
     }
 }
@@ -377,6 +391,10 @@ impl<'gc> Trace<'gc> for Upvalue<'gc> {
     }
 }
 
+// pub struct NativeFunction {
+//     inner: Rc<NativeFunctionInner>,
+// }
+
 #[derive(Debug)]
 pub struct WrongTypeError {
     pub expected: ValueTypes,
@@ -423,6 +441,7 @@ pub enum ValueType {
     List,
     Map,
     Closure,
+    Fiber,
 }
 
 impl Display for ValueType {
@@ -436,6 +455,7 @@ impl Display for ValueType {
             ValueType::List => write!(f, "list"),
             ValueType::Map => write!(f, "map"),
             ValueType::Closure => write!(f, "closure"),
+            ValueType::Fiber => write!(f, "fiber"),
         }
     }
 }

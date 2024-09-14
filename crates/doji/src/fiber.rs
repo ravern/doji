@@ -1,36 +1,40 @@
+use std::{cell::RefCell, hash::Hash};
+
 use crate::{
     code::{CodeOffset, ConstantIndex, Instruction, StackSlot},
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
-    gc::Heap,
-    value::{Closure, Function, Value, ValueType, WrongTypeError},
+    gc::{Handle, Heap, Trace, Tracer},
+    value::{Function, Value, ValueType, WrongTypeError},
 };
 
+#[derive(Debug)]
 pub struct Fiber<'gc> {
-    function: Function,
-    code_offset: CodeOffset,
-    stack: Stack<'gc>,
-}
-
-enum FiberStep<'gc> {
-    Step,
-    Done(Value<'gc>),
+    inner: Handle<'gc, RefCell<FiberInner<'gc>>>,
 }
 
 impl<'gc> Fiber<'gc> {
     pub fn allocate(heap: &Heap<'gc>, function: Function) -> Fiber<'gc> {
-        Fiber {
-            function: function.clone(),
-            code_offset: CodeOffset::from(0),
-            stack: Stack::new(Value::Closure(Closure::allocate(heap, function))),
-        }
+        Fiber::allocate_with_stack(
+            heap,
+            function.clone(),
+            Stack::new(Value::allocate_closure(heap, function)),
+        )
     }
 
-    pub fn with_stack(function: Function, stack: Stack<'gc>) -> Fiber<'gc> {
+    pub fn allocate_with_stack(
+        heap: &Heap<'gc>,
+        function: Function,
+        stack: Stack<'gc>,
+    ) -> Fiber<'gc> {
         Fiber {
-            function,
-            code_offset: CodeOffset::from(0),
-            stack,
+            inner: heap
+                .allocate(RefCell::new(FiberInner {
+                    function: function.clone(),
+                    code_offset: CodeOffset::from(0),
+                    stack,
+                }))
+                .as_handle(),
         }
     }
 
@@ -40,13 +44,55 @@ impl<'gc> Fiber<'gc> {
         heap: &Heap<'gc>,
     ) -> Result<Value<'gc>, Error> {
         loop {
-            match self.step(env, heap).await? {
+            match self.inner.root().borrow_mut().step(env, heap).await? {
                 FiberStep::Step => {}
                 FiberStep::Done(value) => return Ok(value),
             }
         }
     }
+}
 
+impl<'gc> Trace<'gc> for Fiber<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        tracer.trace_handle(&self.inner);
+    }
+}
+
+impl<'gc> Clone for Fiber<'gc> {
+    fn clone(&self) -> Self {
+        Fiber {
+            inner: Handle::clone(&self.inner),
+        }
+    }
+}
+
+impl<'gc> PartialEq for Fiber<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        Handle::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl<'gc> Eq for Fiber<'gc> {}
+
+impl<'gc> Hash for Fiber<'gc> {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        Handle::as_ptr(&self.inner).hash(state);
+    }
+}
+
+enum FiberStep<'gc> {
+    Step,
+    Done(Value<'gc>),
+}
+
+#[derive(Debug)]
+struct FiberInner<'gc> {
+    function: Function,
+    code_offset: CodeOffset,
+    stack: Stack<'gc>,
+}
+
+impl<'gc> FiberInner<'gc> {
     async fn step(
         &mut self,
         env: &Environment<'gc>,
@@ -74,19 +120,21 @@ impl<'gc> Fiber<'gc> {
         }
 
         let instruction = self.instruction()?;
-        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+
+        self.increment_code_offset();
+
         match instruction {
             Instruction::Noop => {}
 
-            Instruction::Nil => self.stack.push(Value::Nil),
-            Instruction::True => self.stack.push(Value::Bool(true)),
-            Instruction::False => self.stack.push(Value::Bool(false)),
-            Instruction::List => self.stack.push(Value::allocate_list(heap)),
-            Instruction::Map => self.stack.push(Value::allocate_map(heap)),
+            Instruction::Nil => self.stack_push(Value::Nil),
+            Instruction::True => self.stack_push(Value::Bool(true)),
+            Instruction::False => self.stack_push(Value::Bool(false)),
+            Instruction::List => self.stack_push(Value::allocate_list(heap)),
+            Instruction::Map => self.stack_push(Value::allocate_map(heap)),
 
             Instruction::Constant(index) => {
                 let constant = self.constant(env, index)?;
-                self.stack.push(constant)
+                self.stack_push(constant)
             }
             Instruction::Closure(_) => todo!(),
 
@@ -95,11 +143,7 @@ impl<'gc> Fiber<'gc> {
             Instruction::Mul => binary_op!(mul),
             Instruction::Div => binary_op!(div),
             Instruction::Rem => binary_op!(rem),
-            Instruction::Eq => {
-                let right = self.stack_pop()?;
-                let left = self.stack_pop()?;
-                self.stack.push(Value::Bool(left == right));
-            }
+            Instruction::Eq => binary_op!(eq),
             Instruction::Gt => binary_op!(gt),
             Instruction::Gte => binary_op!(gte),
             Instruction::Lt => binary_op!(lt),
@@ -112,15 +156,15 @@ impl<'gc> Fiber<'gc> {
             Instruction::BitOr => binary_op!(bit_or),
             Instruction::BitXor => binary_op!(bit_xor),
 
-            Instruction::Load(slot) => self.stack.push(self.stack_get(slot)?),
+            Instruction::Load(slot) => self.stack_push(self.stack_get(slot)?),
             Instruction::Store(slot) => {
                 let value = self.stack_pop()?;
                 self.stack_set(slot, value)?
             }
             Instruction::Duplicate => {
                 let value = self.stack_pop()?;
-                self.stack.push(value.clone());
-                self.stack.push(value);
+                self.stack_push(value.clone());
+                self.stack_push(value);
             }
             Instruction::Pop => {
                 self.stack_pop()?;
@@ -130,7 +174,7 @@ impl<'gc> Fiber<'gc> {
                 let value = self.stack_pop()?;
                 if let Value::Bool(condition) = value {
                     if condition {
-                        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+                        self.increment_code_offset();
                     }
                 } else {
                     return Err(self.error(ErrorKind::WrongType(WrongTypeError {
@@ -169,14 +213,14 @@ impl<'gc> Fiber<'gc> {
                 }
             }
 
-            Instruction::FiberYield => {
-                smol::future::yield_now().await;
-            }
-
             _ => todo!(),
         }
 
         Ok(FiberStep::Step)
+    }
+
+    fn increment_code_offset(&mut self) {
+        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
     }
 
     fn stack_set(&mut self, slot: StackSlot, value: Value<'gc>) -> Result<(), Error> {
@@ -198,8 +242,13 @@ impl<'gc> Fiber<'gc> {
             .ok_or_else(|| self.error(ErrorKind::StackUnderflow))
     }
 
+    fn stack_push(&mut self, value: Value<'gc>) {
+        self.stack.push(value);
+    }
+
     fn stack_push_frame(&mut self, arity: u8) {
-        self.stack.push_frame(arity, self.code_offset.into_usize());
+        let code_offset = self.code_offset.into_usize();
+        self.stack.push_frame(arity, code_offset);
         self.code_offset = CodeOffset::from(0);
     }
 
@@ -222,15 +271,23 @@ impl<'gc> Fiber<'gc> {
     }
 }
 
+impl<'gc> Trace<'gc> for FiberInner<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        self.stack.trace(tracer);
+    }
+}
+
+#[derive(Debug)]
+struct StackFrame {
+    stack_base: usize,
+    code_offset: usize,
+}
+
+#[derive(Debug)]
 pub struct Stack<'gc> {
     base: usize,
     values: Vec<Value<'gc>>,
     frames: Vec<StackFrame>,
-}
-
-struct StackFrame {
-    stack_base: usize,
-    code_offset: usize,
 }
 
 impl<'gc> Stack<'gc> {
@@ -282,6 +339,14 @@ impl<'gc> Stack<'gc> {
             Some(CodeOffset::from(frame.code_offset))
         } else {
             None
+        }
+    }
+}
+
+impl<'gc> Trace<'gc> for Stack<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        for value in &self.values {
+            value.trace(tracer);
         }
     }
 }
