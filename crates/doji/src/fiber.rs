@@ -190,19 +190,34 @@ impl<'gc> FiberInner<'gc> {
             Instruction::Call(arity) => {
                 let value_slot = StackSlot::from(self.stack.size() - (arity as usize) - 1);
                 let value = self.stack_get(value_slot)?;
-                if let Value::Closure(closure) = value {
-                    if closure.arity() != arity {
-                        return Err(self.error(ErrorKind::WrongArity {
-                            expected: closure.arity(),
-                            found: arity,
-                        }));
+                match value {
+                    Value::Closure(closure) => {
+                        if closure.arity() != arity {
+                            return Err(self.error(ErrorKind::WrongArity {
+                                expected: closure.arity(),
+                                found: arity,
+                            }));
+                        }
+                        self.function = closure.function();
+                        self.stack_push_frame(arity);
                     }
-                    self.stack_push_frame(arity);
-                } else {
-                    return Err(self.error(ErrorKind::WrongType(WrongTypeError {
-                        expected: [ValueType::Closure].into(),
-                        found: value.ty(),
-                    })));
+                    Value::NativeFunction(native) => {
+                        if native.arity() != arity {
+                            return Err(self.error(ErrorKind::WrongArity {
+                                expected: native.arity(),
+                                found: arity,
+                            }));
+                        }
+                        self.stack_push_frame(arity);
+                        native.call(env, heap, &mut self.stack)?;
+                        self.code_offset = self.stack.pop_frame().unwrap();
+                    }
+                    _ => {
+                        return Err(self.error(ErrorKind::WrongType(WrongTypeError {
+                            expected: [ValueType::Closure, ValueType::NativeFunction].into(),
+                            found: value.ty(),
+                        })));
+                    }
                 }
             }
             Instruction::Return => {
@@ -278,12 +293,6 @@ impl<'gc> Trace<'gc> for FiberInner<'gc> {
 }
 
 #[derive(Debug)]
-struct StackFrame {
-    stack_base: usize,
-    code_offset: usize,
-}
-
-#[derive(Debug)]
 pub struct Stack<'gc> {
     base: usize,
     values: Vec<Value<'gc>>,
@@ -307,7 +316,7 @@ impl<'gc> Stack<'gc> {
         self.values.get(self.base + slot.into_usize()).cloned()
     }
 
-    fn set(&mut self, slot: StackSlot, value: Value<'gc>) -> Option<Value<'gc>> {
+    pub fn set(&mut self, slot: StackSlot, value: Value<'gc>) -> Option<Value<'gc>> {
         self.values
             .get_mut(self.base + slot.into_usize())
             .map(|slot_value| {
@@ -316,11 +325,11 @@ impl<'gc> Stack<'gc> {
             })
     }
 
-    fn push(&mut self, value: Value<'gc>) {
+    pub fn push(&mut self, value: Value<'gc>) {
         self.values.push(value);
     }
 
-    fn pop(&mut self) -> Option<Value<'gc>> {
+    pub fn pop(&mut self) -> Option<Value<'gc>> {
         self.values.pop()
     }
 
@@ -349,4 +358,10 @@ impl<'gc> Trace<'gc> for Stack<'gc> {
             value.trace(tracer);
         }
     }
+}
+
+#[derive(Debug)]
+struct StackFrame {
+    stack_base: usize,
+    code_offset: usize,
 }

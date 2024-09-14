@@ -2,7 +2,6 @@ use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
 pub struct Chunk {
-    pub arity: u8,
     pub code: Box<[Instruction]>,
 }
 
@@ -94,16 +93,12 @@ define_operand!(StackSlot);
 define_operand!(ConstantIndex);
 
 pub struct ChunkBuilder {
-    arity: u8,
     code: Vec<Instruction>,
 }
 
 impl ChunkBuilder {
-    pub fn new(arity: u8) -> ChunkBuilder {
-        ChunkBuilder {
-            arity,
-            code: Vec::new(),
-        }
+    pub fn new() -> ChunkBuilder {
+        ChunkBuilder { code: Vec::new() }
     }
 
     pub fn code<I>(mut self, instructions: I) -> ChunkBuilder
@@ -116,7 +111,6 @@ impl ChunkBuilder {
 
     pub fn build(self) -> Chunk {
         Chunk {
-            arity: self.arity,
             code: self.code.into(),
         }
     }

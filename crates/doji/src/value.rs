@@ -9,7 +9,8 @@ use std::{
 use crate::{
     code::{Chunk, CodeOffset, Instruction},
     env::Environment,
-    fiber::Fiber,
+    error::Error,
+    fiber::{Fiber, Stack},
     gc::{Handle, Heap, Trace, Tracer},
 };
 
@@ -81,7 +82,7 @@ pub enum Value<'gc> {
     Map(Map<'gc>),
     Closure(Closure<'gc>),
     Fiber(Fiber<'gc>),
-    // NativeFunction(NativeFunction),
+    NativeFunction(NativeFunction),
 }
 
 impl<'gc> Value<'gc> {
@@ -112,6 +113,7 @@ impl<'gc> Value<'gc> {
             Value::Map(_) => ValueType::Map,
             Value::Closure(_) => ValueType::Closure,
             Value::Fiber(_) => ValueType::Fiber,
+            Value::NativeFunction(_) => ValueType::NativeFunction,
         }
     }
 
@@ -159,7 +161,12 @@ impl<'gc> Value<'gc> {
 impl<'gc> Trace<'gc> for Value<'gc> {
     fn trace(&self, tracer: &Tracer) {
         match self {
-            Value::Nil | Value::Bool(_) | Value::Int(_) | Value::Float(_) | Value::String(_) => {}
+            Value::Nil
+            | Value::Bool(_)
+            | Value::Int(_)
+            | Value::Float(_)
+            | Value::String(_)
+            | Value::NativeFunction(_) => {}
             Value::List(list) => list.trace(tracer),
             Value::Map(map) => map.trace(tracer),
             Value::Closure(closure) => closure.trace(tracer),
@@ -300,8 +307,12 @@ impl<'gc> Closure<'gc> {
         }
     }
 
+    pub fn function(&self) -> Function {
+        self.inner.root().function.clone()
+    }
+
     pub fn arity(&self) -> u8 {
-        self.inner.root().function.chunk.arity
+        self.inner.root().function.arity
     }
 }
 
@@ -349,12 +360,14 @@ impl<'gc> Trace<'gc> for ClosureInner<'gc> {
 
 #[derive(Debug)]
 pub struct Function {
+    arity: u8,
     chunk: Rc<Chunk>,
 }
 
 impl Function {
-    pub fn new(chunk: Chunk) -> Function {
+    pub fn new(arity: u8, chunk: Chunk) -> Function {
         Function {
+            arity,
             chunk: Rc::new(chunk),
         }
     }
@@ -371,6 +384,7 @@ impl Function {
 impl Clone for Function {
     fn clone(&self) -> Self {
         Function {
+            arity: self.arity,
             chunk: Rc::clone(&self.chunk),
         }
     }
@@ -391,9 +405,62 @@ impl<'gc> Trace<'gc> for Upvalue<'gc> {
     }
 }
 
-// pub struct NativeFunction {
-//     inner: Rc<NativeFunctionInner>,
-// }
+pub type NativeFunctionFn =
+    for<'gc> fn(&Environment<'gc>, &Heap<'gc>, &mut Stack<'gc>) -> Result<(), Error>;
+
+#[derive(Debug)]
+pub struct NativeFunction {
+    inner: Rc<NativeFunctionInner>,
+}
+
+impl NativeFunction {
+    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunction {
+        NativeFunction {
+            inner: Rc::new(NativeFunctionInner { arity, function }),
+        }
+    }
+
+    pub fn arity(&self) -> u8 {
+        self.inner.arity
+    }
+
+    pub fn call<'gc>(
+        &self,
+        env: &Environment<'gc>,
+        heap: &Heap<'gc>,
+        stack: &mut Stack<'gc>,
+    ) -> Result<(), Error> {
+        (self.inner.function)(env, heap, stack)
+    }
+}
+
+impl Clone for NativeFunction {
+    fn clone(&self) -> Self {
+        NativeFunction {
+            inner: Rc::clone(&self.inner),
+        }
+    }
+}
+
+impl PartialEq for NativeFunction {
+    fn eq(&self, other: &Self) -> bool {
+        Rc::ptr_eq(&self.inner, &other.inner)
+    }
+}
+
+impl Eq for NativeFunction {}
+
+impl Hash for NativeFunction {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Rc::as_ptr(&self.inner).hash(state);
+    }
+}
+
+#[derive(Debug)]
+struct NativeFunctionInner {
+    arity: u8,
+    function: NativeFunctionFn,
+}
 
 #[derive(Debug)]
 pub struct WrongTypeError {
@@ -442,6 +509,7 @@ pub enum ValueType {
     Map,
     Closure,
     Fiber,
+    NativeFunction,
 }
 
 impl Display for ValueType {
@@ -456,6 +524,7 @@ impl Display for ValueType {
             ValueType::Map => write!(f, "map"),
             ValueType::Closure => write!(f, "closure"),
             ValueType::Fiber => write!(f, "fiber"),
+            ValueType::NativeFunction => write!(f, "native function"),
         }
     }
 }

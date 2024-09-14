@@ -1,8 +1,8 @@
 use crate::{
-    code::{ChunkBuilder, ConstantIndex, Instruction, StackSlot},
+    code::{ChunkBuilder, CodeOffset, ConstantIndex, Instruction, StackSlot},
     env::Environment,
-    error::Error,
-    value::{Function, Value},
+    error::{Error, ErrorContext, ErrorKind},
+    value::{Function, NativeFunction, Value, ValueType, WrongTypeError},
 };
 
 pub struct Compiler {}
@@ -15,12 +15,36 @@ impl Compiler {
     ) -> Result<Function, Error> {
         let index_two = env.add_constant(Value::Int(2));
         let index_four = env.add_constant(Value::Int(4));
+        let index_add = env.add_constant(Value::NativeFunction(NativeFunction::new(
+            2,
+            |env, heap, stack| {
+                let right = stack.pop().unwrap();
+                let left = stack.pop().unwrap();
+                match (&left, &right) {
+                    (Value::Int(left), Value::Int(right)) => {
+                        stack.set(StackSlot::from(0), Value::Int(left + right));
+                        Ok(())
+                    }
+                    _ => Err(Error::new(
+                        ErrorContext {
+                            code_offset: CodeOffset::from(0),
+                        },
+                        ErrorKind::WrongType(WrongTypeError {
+                            expected: [ValueType::Int].into(),
+                            found: left.ty(),
+                        }),
+                    )),
+                }
+            },
+        )));
         Ok(Function::new(
-            ChunkBuilder::new(0)
+            0,
+            ChunkBuilder::new()
                 .code([
-                    Instruction::Constant(ConstantIndex::from(index_two)),
-                    Instruction::Constant(ConstantIndex::from(index_four)),
-                    Instruction::Add,
+                    Instruction::Constant(index_add),
+                    Instruction::Constant(index_two),
+                    Instruction::Constant(index_four),
+                    Instruction::Call(2),
                     Instruction::Store(StackSlot::from(0)),
                     Instruction::Return,
                 ])
