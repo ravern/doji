@@ -1,5 +1,5 @@
 use crate::{
-    compile::Compiler, env::Environment, error::Error, fiber::Fiber, gc::Heap,
+    compile::Compiler, env::Environment, error::Error, fiber::FiberHandle, gc::Heap,
     native::NativeModule, value::Value,
 };
 
@@ -31,7 +31,7 @@ impl<'gc> Engine<'gc> {
 
     pub async fn execute_str(&mut self, path: &str, source: &str) -> Result<Value<'gc>, Error> {
         let function = self.compiler.compile(&self.env, source)?;
-        let mut fiber = Fiber::allocate(&self.heap, function);
+        let mut fiber = FiberHandle::new_in(&self.heap, function);
         fiber.run(&self.env, &self.heap).await
     }
 

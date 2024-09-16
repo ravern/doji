@@ -1,8 +1,8 @@
 use crate::{
-    code::{ChunkBuilder, CodeOffset, ConstantIndex, Instruction, StackSlot},
+    code::{ChunkBuilder, CodeOffset, Instruction, StackSlot},
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
-    value::{Function, NativeFunction, Value, ValueType, WrongTypeError},
+    value::{Function, NativeFunctionHandle, TypeError, Value, ValueType},
 };
 
 pub struct Compiler {}
@@ -15,7 +15,7 @@ impl Compiler {
     ) -> Result<Function, Error> {
         let index_two = env.add_constant(Value::Int(2));
         let index_four = env.add_constant(Value::Int(4));
-        let index_add = env.add_constant(Value::NativeFunction(NativeFunction::new(
+        let index_add = env.add_constant(Value::NativeFunction(NativeFunctionHandle::new(
             2,
             |env, heap, stack| {
                 let right = stack.pop().unwrap();
@@ -29,7 +29,7 @@ impl Compiler {
                         ErrorContext {
                             code_offset: CodeOffset::from(0),
                         },
-                        ErrorKind::WrongType(WrongTypeError {
+                        ErrorKind::WrongType(TypeError {
                             expected: [ValueType::Int].into(),
                             found: left.ty(),
                         }),

@@ -10,7 +10,7 @@ use crate::{
     code::{Chunk, CodeOffset, Instruction},
     env::Environment,
     error::Error,
-    fiber::{Fiber, Stack},
+    fiber::{FiberHandle, Stack},
     gc::{Handle, Heap, Trace, Tracer},
 };
 
@@ -19,7 +19,7 @@ macro_rules! define_float_op {
         define_float_op!($name, $op, $res, $res);
     };
     ($name:ident, $op:tt, $res_int:ident, $res_float:ident) => {
-        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
             match (self, other) {
                 (Value::Int(left), Value::Int(right)) => Ok(Value::$res_int(left $op right)),
                 (Value::Int(left), Value::Float(right)) => {
@@ -34,7 +34,7 @@ macro_rules! define_float_op {
                     let result = left.into_f64() $op right.into_f64();
                     Ok(Value::$res_float(result.into()))
                 }
-                (Value::Int(_), value) | (Value::Float(_), value) | (value, _) => Err(WrongTypeError {
+                (Value::Int(_), value) | (Value::Float(_), value) | (value, _) => Err(TypeError {
                     expected: [ValueType::Int, ValueType::Float].into(),
                     found: value.ty(),
                 }),
@@ -45,10 +45,10 @@ macro_rules! define_float_op {
 
 macro_rules! define_int_op {
     ($name:ident, $op:tt) => {
-        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
             match (self, other) {
                 (Value::Int(left), Value::Int(right)) => Ok(Value::Int(left $op right)),
-                (Value::Int(_), value) | (value, _) => Err(WrongTypeError {
+                (Value::Int(_), value) | (value, _) => Err(TypeError {
                     expected: [ValueType::Int].into(),
                     found: value.ty(),
                 }),
@@ -59,10 +59,10 @@ macro_rules! define_int_op {
 
 macro_rules! define_bool_op {
     ($name:ident, $op:tt) => {
-        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+        pub fn $name(&self, other: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
             match (self, other) {
                 (Value::Bool(left), Value::Bool(right)) => Ok(Value::Bool(*left $op *right)),
-                (Value::Bool(_), value) | (value, _) => Err(WrongTypeError {
+                (Value::Bool(_), value) | (value, _) => Err(TypeError {
                     expected: [ValueType::Bool].into(),
                     found: value.ty(),
                 }),
@@ -78,11 +78,11 @@ pub enum Value<'gc> {
     Int(i64),
     Float(Float),
     String(String),
-    List(List<'gc>),
-    Map(Map<'gc>),
-    Closure(Closure<'gc>),
-    Fiber(Fiber<'gc>),
-    NativeFunction(NativeFunction),
+    List(ListHandle<'gc>),
+    Map(MapHandle<'gc>),
+    Closure(ClosureHandle<'gc>),
+    Fiber(FiberHandle<'gc>),
+    NativeFunction(NativeFunctionHandle),
 }
 
 impl<'gc> Value<'gc> {
@@ -90,16 +90,16 @@ impl<'gc> Value<'gc> {
         Value::Float(Float::from(value))
     }
 
-    pub fn allocate_list(heap: &Heap<'gc>) -> Value<'gc> {
-        Value::List(List::allocate(heap))
+    pub fn list_in(heap: &Heap<'gc>) -> Value<'gc> {
+        Value::List(ListHandle::new_in(heap))
     }
 
-    pub fn allocate_map(heap: &Heap<'gc>) -> Value<'gc> {
-        Value::Map(Map::allocate(heap))
+    pub fn map_in(heap: &Heap<'gc>) -> Value<'gc> {
+        Value::Map(MapHandle::new_in(heap))
     }
 
-    pub fn allocate_closure(heap: &Heap<'gc>, function: Function) -> Value<'gc> {
-        Value::Closure(Closure::allocate(heap, function))
+    pub fn closure_in(heap: &Heap<'gc>, function: Function) -> Value<'gc> {
+        Value::Closure(ClosureHandle::new_in(heap, function))
     }
 
     pub fn ty(&self) -> ValueType {
@@ -132,25 +132,25 @@ impl<'gc> Value<'gc> {
     define_int_op!(bit_or, |);
     define_int_op!(bit_xor, ^);
 
-    pub fn eq(&self, other: &Value<'gc>) -> Result<Value<'gc>, WrongTypeError> {
+    pub fn eq(&self, other: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
         Ok(Value::Bool(self == other))
     }
 
-    pub fn neg(&self) -> Result<Value<'gc>, WrongTypeError> {
+    pub fn neg(&self) -> Result<Value<'gc>, TypeError> {
         match self {
             Value::Int(value) => Ok(Value::Int(-value)),
             Value::Float(value) => Ok(Value::Float(Float::from(-value.into_f64()))),
-            value => Err(WrongTypeError {
+            value => Err(TypeError {
                 expected: [ValueType::Int, ValueType::Float].into(),
                 found: value.ty(),
             }),
         }
     }
 
-    pub fn not(&self) -> Result<Value<'gc>, WrongTypeError> {
+    pub fn not(&self) -> Result<Value<'gc>, TypeError> {
         match self {
             Value::Bool(value) => Ok(Value::Bool(!value)),
-            value => Err(WrongTypeError {
+            value => Err(TypeError {
                 expected: [ValueType::Bool].into(),
                 found: value.ty(),
             }),
@@ -209,148 +209,131 @@ impl Hash for Float {
 pub struct String(Box<str>);
 
 #[derive(Debug)]
-pub struct List<'gc> {
-    inner: Handle<'gc, RefCell<Vec<Value<'gc>>>>,
-}
+pub struct ListHandle<'gc>(Handle<'gc, RefCell<Vec<Value<'gc>>>>);
 
-impl<'gc> List<'gc> {
-    pub fn allocate(heap: &Heap<'gc>) -> List<'gc> {
-        List {
-            inner: heap.allocate(RefCell::new(Vec::new())).as_handle(),
-        }
+impl<'gc> ListHandle<'gc> {
+    pub fn new_in(heap: &Heap<'gc>) -> ListHandle<'gc> {
+        ListHandle(heap.allocate(RefCell::new(Vec::new())).as_handle())
     }
 }
 
-impl<'gc> Clone for List<'gc> {
+impl<'gc> Clone for ListHandle<'gc> {
     fn clone(&self) -> Self {
-        List {
-            inner: Handle::clone(&self.inner),
-        }
+        ListHandle(Handle::clone(&self.0))
     }
 }
 
-impl<'gc> PartialEq for List<'gc> {
+impl<'gc> PartialEq for ListHandle<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.inner, &other.inner)
+        Handle::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl<'gc> Eq for List<'gc> {}
+impl<'gc> Eq for ListHandle<'gc> {}
 
-impl<'gc> Hash for List<'gc> {
+impl<'gc> Hash for ListHandle<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.inner).hash(state);
+        Handle::as_ptr(&self.0).hash(state);
     }
 }
 
-impl<'gc> Trace<'gc> for List<'gc> {
+impl<'gc> Trace<'gc> for ListHandle<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.inner);
+        tracer.trace_handle(&self.0);
     }
 }
 
 #[derive(Debug)]
-pub struct Map<'gc> {
-    inner: Handle<'gc, RefCell<HashMap<Value<'gc>, Value<'gc>>>>,
-}
+pub struct MapHandle<'gc>(Handle<'gc, RefCell<HashMap<Value<'gc>, Value<'gc>>>>);
 
-impl<'gc> Map<'gc> {
-    pub fn allocate(heap: &Heap<'gc>) -> Map<'gc> {
-        Map {
-            inner: heap.allocate(RefCell::new(HashMap::new())).as_handle(),
-        }
+impl<'gc> MapHandle<'gc> {
+    pub fn new_in(heap: &Heap<'gc>) -> MapHandle<'gc> {
+        MapHandle(heap.allocate(RefCell::new(HashMap::new())).as_handle())
     }
 }
 
-impl<'gc> Clone for Map<'gc> {
+impl<'gc> Clone for MapHandle<'gc> {
     fn clone(&self) -> Self {
-        Map {
-            inner: Handle::clone(&self.inner),
-        }
+        MapHandle(Handle::clone(&self.0))
     }
 }
 
-impl<'gc> PartialEq for Map<'gc> {
+impl<'gc> PartialEq for MapHandle<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.inner, &other.inner)
+        Handle::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl<'gc> Eq for Map<'gc> {}
+impl<'gc> Eq for MapHandle<'gc> {}
 
-impl<'gc> Hash for Map<'gc> {
+impl<'gc> Hash for MapHandle<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.inner).hash(state);
+        Handle::as_ptr(&self.0).hash(state);
     }
 }
 
-impl<'gc> Trace<'gc> for Map<'gc> {
+impl<'gc> Trace<'gc> for MapHandle<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.inner);
+        tracer.trace_handle(&self.0);
     }
 }
 
 #[derive(Debug)]
-pub struct Closure<'gc> {
-    inner: Handle<'gc, ClosureInner<'gc>>,
-}
+pub struct ClosureHandle<'gc>(Handle<'gc, Closure<'gc>>);
 
-impl<'gc> Closure<'gc> {
-    pub fn allocate(heap: &Heap<'gc>, function: Function) -> Closure<'gc> {
-        Closure {
-            inner: heap
-                .allocate(ClosureInner {
-                    function,
-                    upvalues: [].into(),
-                })
-                .as_handle(),
-        }
+impl<'gc> ClosureHandle<'gc> {
+    pub fn new_in(heap: &Heap<'gc>, function: Function) -> ClosureHandle<'gc> {
+        ClosureHandle(
+            heap.allocate(Closure {
+                function,
+                upvalues: [].into(),
+            })
+            .as_handle(),
+        )
     }
 
     pub fn function(&self) -> Function {
-        self.inner.root().function.clone()
+        self.0.root().function.clone()
     }
 
     pub fn arity(&self) -> u8 {
-        self.inner.root().function.arity
+        self.0.root().function.arity
     }
 }
 
-impl<'gc> Clone for Closure<'gc> {
+impl<'gc> Clone for ClosureHandle<'gc> {
     fn clone(&self) -> Self {
-        Closure {
-            inner: Handle::clone(&self.inner),
-        }
+        ClosureHandle(Handle::clone(&self.0))
     }
 }
 
-impl<'gc> PartialEq for Closure<'gc> {
+impl<'gc> PartialEq for ClosureHandle<'gc> {
     fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.inner, &other.inner)
+        Handle::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl<'gc> Eq for Closure<'gc> {}
+impl<'gc> Eq for ClosureHandle<'gc> {}
 
-impl<'gc> Hash for Closure<'gc> {
+impl<'gc> Hash for ClosureHandle<'gc> {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.inner).hash(state);
+        Handle::as_ptr(&self.0).hash(state);
     }
 }
 
-impl<'gc> Trace<'gc> for Closure<'gc> {
+impl<'gc> Trace<'gc> for ClosureHandle<'gc> {
     fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.inner);
+        tracer.trace_handle(&self.0);
     }
 }
 
 #[derive(Debug)]
-struct ClosureInner<'gc> {
+struct Closure<'gc> {
     function: Function,
-    upvalues: Box<[Upvalue<'gc>]>,
+    upvalues: Box<[UpvalueHandle<'gc>]>,
 }
 
-impl<'gc> Trace<'gc> for ClosureInner<'gc> {
+impl<'gc> Trace<'gc> for Closure<'gc> {
     fn trace(&self, tracer: &Tracer) {
         for upvalue in &*self.upvalues {
             upvalue.trace(tracer)
@@ -391,6 +374,15 @@ impl Clone for Function {
 }
 
 #[derive(Debug)]
+pub struct UpvalueHandle<'gc>(Handle<'gc, RefCell<Upvalue<'gc>>>);
+
+impl<'gc> Trace<'gc> for UpvalueHandle<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        tracer.trace_handle(&self.0);
+    }
+}
+
+#[derive(Debug)]
 pub enum Upvalue<'gc> {
     Open(usize),
     Closed(Handle<'gc, Value<'gc>>),
@@ -409,19 +401,15 @@ pub type NativeFunctionFn =
     for<'gc> fn(&Environment<'gc>, &Heap<'gc>, &mut Stack<'gc>) -> Result<(), Error>;
 
 #[derive(Debug)]
-pub struct NativeFunction {
-    inner: Rc<NativeFunctionInner>,
-}
+pub struct NativeFunctionHandle(Rc<NativeFunction>);
 
-impl NativeFunction {
-    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunction {
-        NativeFunction {
-            inner: Rc::new(NativeFunctionInner { arity, function }),
-        }
+impl NativeFunctionHandle {
+    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunctionHandle {
+        NativeFunctionHandle(Rc::new(NativeFunction { arity, function }))
     }
 
     pub fn arity(&self) -> u8 {
-        self.inner.arity
+        self.0.arity
     }
 
     pub fn call<'gc>(
@@ -430,45 +418,43 @@ impl NativeFunction {
         heap: &Heap<'gc>,
         stack: &mut Stack<'gc>,
     ) -> Result<(), Error> {
-        (self.inner.function)(env, heap, stack)
+        (self.0.function)(env, heap, stack)
     }
 }
 
-impl Clone for NativeFunction {
+impl Clone for NativeFunctionHandle {
     fn clone(&self) -> Self {
-        NativeFunction {
-            inner: Rc::clone(&self.inner),
-        }
+        NativeFunctionHandle(Rc::clone(&self.0))
     }
 }
 
-impl PartialEq for NativeFunction {
+impl PartialEq for NativeFunctionHandle {
     fn eq(&self, other: &Self) -> bool {
-        Rc::ptr_eq(&self.inner, &other.inner)
+        Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for NativeFunction {}
+impl Eq for NativeFunctionHandle {}
 
-impl Hash for NativeFunction {
+impl Hash for NativeFunctionHandle {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        Rc::as_ptr(&self.inner).hash(state);
+        Rc::as_ptr(&self.0).hash(state);
     }
 }
 
 #[derive(Debug)]
-struct NativeFunctionInner {
+struct NativeFunction {
     arity: u8,
     function: NativeFunctionFn,
 }
 
 #[derive(Debug)]
-pub struct WrongTypeError {
+pub struct TypeError {
     pub expected: ValueTypes,
     pub found: ValueType,
 }
 
-impl Display for WrongTypeError {
+impl Display for TypeError {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(
             f,

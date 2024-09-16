@@ -2,7 +2,7 @@ use std::fmt::{self, Display, Formatter};
 
 use crate::{
     code::{CodeOffset, ConstantIndex, StackSlot},
-    value::WrongTypeError,
+    value::TypeError,
 };
 
 #[derive(Debug)]
@@ -54,6 +54,6 @@ pub enum ErrorKind {
     StackUnderflow,
     InvalidStackSlot(StackSlot),
     InvalidConstantIndex(ConstantIndex),
-    WrongType(WrongTypeError),
+    WrongType(TypeError),
     WrongArity { expected: u8, found: u8 },
 }
