@@ -2,7 +2,14 @@ use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
 pub struct Chunk {
+    pub upvalues: Box<[Upvalue]>,
     pub code: Box<[Instruction]>,
+}
+
+#[derive(Debug)]
+pub enum Upvalue {
+    Local(StackSlot),
+    Upvalue(UpvalueIndex),
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -93,12 +100,21 @@ define_operand!(StackSlot);
 define_operand!(ConstantIndex);
 
 pub struct ChunkBuilder {
+    upvalues: Vec<Upvalue>,
     code: Vec<Instruction>,
 }
 
 impl ChunkBuilder {
     pub fn new() -> ChunkBuilder {
-        ChunkBuilder { code: Vec::new() }
+        ChunkBuilder {
+            upvalues: Vec::new(),
+            code: Vec::new(),
+        }
+    }
+
+    pub fn upvalue(mut self, upvalue: Upvalue) -> ChunkBuilder {
+        self.upvalues.push(upvalue);
+        self
     }
 
     pub fn code<I>(mut self, instructions: I) -> ChunkBuilder
@@ -111,6 +127,7 @@ impl ChunkBuilder {
 
     pub fn build(self) -> Chunk {
         Chunk {
+            upvalues: self.upvalues.into(),
             code: self.code.into(),
         }
     }

@@ -49,7 +49,7 @@ mod tests {
         smol::block_on(async {
             let mut engine = Engine::new();
             let result = engine.execute_str("test", "2 + 4").await.unwrap();
-            assert_eq!(result, Value::Int(6));
+            assert_eq!(result, Value::Int(79));
         });
     }
 }

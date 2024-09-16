@@ -1,7 +1,8 @@
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    code::{CodeOffset, ConstantIndex, StackSlot},
+    code::{CodeOffset, ConstantIndex, FunctionIndex, StackSlot, UpvalueIndex},
+    fiber::AbsoluteStackSlot,
     value::TypeError,
 };
 
@@ -31,9 +32,21 @@ impl Display for Error {
         match &self.kind {
             ErrorKind::CodeOffsetOutOfBounds => write!(f, "code offset out of bounds"),
             ErrorKind::StackUnderflow => write!(f, "stack underflow"),
+            ErrorKind::InvalidAbsoluteStackSlot(slot) => {
+                write!(f, "invalid absolute stack slot: {}", slot)
+            }
+            ErrorKind::FirstStackSlotNotClosure => {
+                write!(f, "expected first stack slot to be a closure")
+            }
             ErrorKind::InvalidStackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
             ErrorKind::InvalidConstantIndex(index) => {
                 write!(f, "invalid constant index: {}", index)
+            }
+            ErrorKind::InvalidFunctionIndex(index) => {
+                write!(f, "invalid function index: {}", index)
+            }
+            ErrorKind::InvalidUpvalueIndex(index) => {
+                write!(f, "invalid upvalue index: {}", index)
             }
             ErrorKind::WrongType(error) => write!(f, "{}", error),
             ErrorKind::WrongArity { expected, found } => {
@@ -53,7 +66,11 @@ pub enum ErrorKind {
     CodeOffsetOutOfBounds,
     StackUnderflow,
     InvalidStackSlot(StackSlot),
+    FirstStackSlotNotClosure,
+    InvalidAbsoluteStackSlot(AbsoluteStackSlot),
     InvalidConstantIndex(ConstantIndex),
+    InvalidFunctionIndex(FunctionIndex),
+    InvalidUpvalueIndex(UpvalueIndex),
     WrongType(TypeError),
     WrongArity { expected: u8, found: u8 },
 }

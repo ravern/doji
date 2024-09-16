@@ -1,11 +1,15 @@
-use std::{cell::RefCell, hash::Hash};
+use std::{
+    cell::RefCell,
+    fmt::{self, Display, Formatter},
+    hash::Hash,
+};
 
 use crate::{
-    code::{CodeOffset, ConstantIndex, Instruction, StackSlot},
+    code::{self, CodeOffset, ConstantIndex, FunctionIndex, Instruction, StackSlot},
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
     gc::{Handle, Heap, Trace, Tracer},
-    value::{Function, Value, ValueType, TypeError},
+    value::{ClosureHandle, Function, TypeError, UpvalueHandle, Value, ValueType},
 };
 
 #[derive(Debug)]
@@ -16,14 +20,14 @@ impl<'gc> FiberHandle<'gc> {
         FiberHandle::new_with_stack_in(
             heap,
             function.clone(),
-            Stack::new(Value::closure_in(heap, function)),
+            FiberStack::new(Value::closure_in(heap, function, [].into())),
         )
     }
 
     pub fn new_with_stack_in(
         heap: &Heap<'gc>,
         function: Function,
-        stack: Stack<'gc>,
+        stack: FiberStack<'gc>,
     ) -> FiberHandle<'gc> {
         FiberHandle(
             heap.allocate(RefCell::new(Fiber {
@@ -75,7 +79,7 @@ enum FiberStep<'gc> {
 struct Fiber<'gc> {
     function: Function,
     code_offset: CodeOffset,
-    stack: Stack<'gc>,
+    stack: FiberStack<'gc>,
 }
 
 impl<'gc> Fiber<'gc> {
@@ -115,9 +119,7 @@ impl<'gc> Fiber<'gc> {
         }
 
         let instruction = self.instruction()?;
-
-        self.increment_code_offset();
-
+        self.advance_code_offset();
         match instruction {
             Instruction::Noop => {}
 
@@ -131,7 +133,19 @@ impl<'gc> Fiber<'gc> {
                 let constant = self.constant(env, index)?;
                 self.stack_push(constant)
             }
-            Instruction::Closure(_) => todo!(),
+            Instruction::Closure(index) => {
+                let function = self.function(env, index)?;
+                let upvalues = function
+                    .upvalues()
+                    .iter()
+                    .map(|upvalue| {
+                        let upvalue = self.capture_upvalue(heap, upvalue)?;
+                        self.stack.push_upvalue(upvalue.clone());
+                        Ok(upvalue)
+                    })
+                    .collect::<Result<Box<[_]>, _>>()?;
+                self.stack_push(Value::closure_in(heap, function, upvalues));
+            }
 
             Instruction::Add => binary_op!(add),
             Instruction::Sub => binary_op!(sub),
@@ -169,7 +183,7 @@ impl<'gc> Fiber<'gc> {
                 let value = self.stack_pop()?;
                 if let Value::Bool(condition) = value {
                     if condition {
-                        self.increment_code_offset();
+                        self.advance_code_offset();
                     }
                 } else {
                     return Err(self.error(ErrorKind::WrongType(TypeError {
@@ -218,9 +232,33 @@ impl<'gc> Fiber<'gc> {
             Instruction::Return => {
                 if let Some(offset) = self.stack.pop_frame() {
                     self.code_offset = offset;
+                    self.function = self.stack_base_as_closure()?.function();
                 } else {
                     return Ok(FiberStep::Done(self.stack_pop()?));
                 }
+            }
+
+            Instruction::UpvalueLoad(index) => {
+                let closure = self.stack_base_as_closure()?;
+                let upvalue = closure
+                    .upvalue(index)
+                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(index)))?;
+                let value = upvalue.get_in(&self.stack).ok_or_else(|| {
+                    self.error(ErrorKind::InvalidAbsoluteStackSlot(upvalue.slot().unwrap()))
+                })?;
+                self.stack_push(value);
+            }
+            Instruction::UpvalueStore(index) => {
+                let closure = self.stack_base_as_closure()?;
+                let upvalue = closure
+                    .upvalue(index)
+                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(index)))?;
+                let value = self.stack_pop()?;
+                upvalue.set_in(&mut self.stack, value);
+            }
+            Instruction::UpvalueClose => {
+                self.stack
+                    .close_upvalue(StackSlot::from(self.stack.size() - 1));
             }
 
             _ => todo!(),
@@ -229,8 +267,35 @@ impl<'gc> Fiber<'gc> {
         Ok(FiberStep::Step)
     }
 
-    fn increment_code_offset(&mut self) {
+    fn capture_upvalue(
+        &mut self,
+        heap: &Heap<'gc>,
+        upvalue: &code::Upvalue,
+    ) -> Result<UpvalueHandle<'gc>, Error> {
+        match upvalue {
+            code::Upvalue::Local(slot) => Ok(UpvalueHandle::new_in(
+                heap,
+                self.stack.to_absolute_slot(*slot),
+            )),
+            code::Upvalue::Upvalue(index) => {
+                let closure = self.stack_base_as_closure()?;
+                closure
+                    .upvalue(*index)
+                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(*index)))
+            }
+        }
+    }
+
+    fn advance_code_offset(&mut self) {
         self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+    }
+
+    fn stack_base_as_closure(&self) -> Result<ClosureHandle<'gc>, Error> {
+        if let Value::Closure(closure) = self.stack_get(StackSlot::from(0))? {
+            Ok(closure)
+        } else {
+            Err(self.error(ErrorKind::FirstStackSlotNotClosure))
+        }
     }
 
     fn stack_set(&mut self, slot: StackSlot, value: Value<'gc>) -> Result<(), Error> {
@@ -273,6 +338,11 @@ impl<'gc> Fiber<'gc> {
             .ok_or_else(|| self.error(ErrorKind::InvalidConstantIndex(index)))
     }
 
+    fn function(&self, env: &Environment<'gc>, index: FunctionIndex) -> Result<Function, Error> {
+        env.function(index)
+            .ok_or_else(|| self.error(ErrorKind::InvalidFunctionIndex(index)))
+    }
+
     fn error(&self, kind: ErrorKind) -> Error {
         let context = ErrorContext {
             code_offset: CodeOffset::from(self.code_offset.into_usize() - 1),
@@ -288,36 +358,51 @@ impl<'gc> Trace<'gc> for Fiber<'gc> {
 }
 
 #[derive(Debug)]
-pub struct Stack<'gc> {
+pub struct FiberStack<'gc> {
     base: usize,
+    upvalues: Vec<UpvalueHandle<'gc>>,
     values: Vec<Value<'gc>>,
     frames: Vec<StackFrame>,
 }
 
-impl<'gc> Stack<'gc> {
-    fn new(initial: Value<'gc>) -> Stack<'gc> {
-        Stack {
+impl<'gc> FiberStack<'gc> {
+    pub fn new(initial: Value<'gc>) -> FiberStack<'gc> {
+        FiberStack {
             base: 0,
+            upvalues: Vec::new(),
             values: vec![initial],
             frames: Vec::new(),
         }
     }
 
-    fn size(&self) -> usize {
+    pub fn size(&self) -> usize {
         self.values.len()
     }
 
-    fn get(&self, slot: StackSlot) -> Option<Value<'gc>> {
-        self.values.get(self.base + slot.into_usize()).cloned()
+    pub fn get_absolute(&self, slot: AbsoluteStackSlot) -> Option<Value<'gc>> {
+        self.values.get(slot.into_usize()).cloned()
     }
 
-    pub fn set(&mut self, slot: StackSlot, value: Value<'gc>) -> Option<Value<'gc>> {
+    pub fn set_absolute(
+        &mut self,
+        slot: AbsoluteStackSlot,
+        value: Value<'gc>,
+    ) -> Option<Value<'gc>> {
         self.values
-            .get_mut(self.base + slot.into_usize())
+            .get_mut(slot.into_usize())
+            // Set and return the value
             .map(|slot_value| {
                 *slot_value = value.clone();
                 value
             })
+    }
+
+    pub fn get(&self, slot: StackSlot) -> Option<Value<'gc>> {
+        self.get_absolute(AbsoluteStackSlot::from_stack_slot(self.base, slot))
+    }
+
+    pub fn set(&mut self, slot: StackSlot, value: Value<'gc>) -> Option<Value<'gc>> {
+        self.set_absolute(AbsoluteStackSlot::from_stack_slot(self.base, slot), value)
     }
 
     pub fn push(&mut self, value: Value<'gc>) {
@@ -328,7 +413,7 @@ impl<'gc> Stack<'gc> {
         self.values.pop()
     }
 
-    fn push_frame(&mut self, arity: u8, code_offset: usize) {
+    pub fn push_frame(&mut self, arity: u8, code_offset: usize) {
         self.frames.push(StackFrame {
             stack_base: self.base,
             code_offset,
@@ -336,7 +421,7 @@ impl<'gc> Stack<'gc> {
         self.base = self.values.len() - (arity as usize) - 1;
     }
 
-    fn pop_frame(&mut self) -> Option<CodeOffset> {
+    pub fn pop_frame(&mut self) -> Option<CodeOffset> {
         let frame = self.frames.pop();
         if let Some(frame) = frame {
             self.base = frame.stack_base;
@@ -345,9 +430,34 @@ impl<'gc> Stack<'gc> {
             None
         }
     }
+
+    pub fn push_upvalue(&mut self, upvalue: UpvalueHandle<'gc>) {
+        self.upvalues.push(upvalue);
+    }
+
+    pub fn close_upvalue(&mut self, slot: StackSlot) -> Option<Value<'gc>> {
+        let mut num_closed = 0;
+        for upvalue in self.upvalues.iter().rev() {
+            if let Some(upvalue_slot) = upvalue.slot() {
+                if upvalue_slot.into_usize() < slot.into_usize() {
+                    break;
+                }
+            }
+            upvalue.close_in(self);
+            num_closed += 1;
+        }
+        for _ in 0..num_closed {
+            self.upvalues.pop();
+        }
+        self.pop()
+    }
+
+    fn to_absolute_slot(&self, slot: StackSlot) -> AbsoluteStackSlot {
+        AbsoluteStackSlot::from_stack_slot(self.base, slot)
+    }
 }
 
-impl<'gc> Trace<'gc> for Stack<'gc> {
+impl<'gc> Trace<'gc> for FiberStack<'gc> {
     fn trace(&self, tracer: &Tracer) {
         for value in &self.values {
             value.trace(tracer);
@@ -359,4 +469,35 @@ impl<'gc> Trace<'gc> for Stack<'gc> {
 struct StackFrame {
     stack_base: usize,
     code_offset: usize,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct AbsoluteStackSlot(u32);
+
+impl AbsoluteStackSlot {
+    pub fn from_stack_slot(base: usize, slot: StackSlot) -> AbsoluteStackSlot {
+        AbsoluteStackSlot((base + slot.into_usize()) as u32)
+    }
+
+    pub fn into_usize(self) -> usize {
+        self.into()
+    }
+}
+
+impl From<usize> for AbsoluteStackSlot {
+    fn from(index: usize) -> AbsoluteStackSlot {
+        AbsoluteStackSlot(index as u32)
+    }
+}
+
+impl Into<usize> for AbsoluteStackSlot {
+    fn into(self) -> usize {
+        self.0 as usize
+    }
+}
+
+impl Display for AbsoluteStackSlot {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", self.0)
+    }
 }
