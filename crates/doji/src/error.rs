@@ -1,7 +1,7 @@
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    code::{CodeOffset, ConstantIndex, FunctionIndex, StackSlot, UpvalueIndex},
+    bytecode::{CodeOffset, ConstantIndex, FunctionIndex, StackSlot, UpvalueIndex},
     fiber::AbsoluteStackSlot,
     value::TypeError,
 };

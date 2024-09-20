@@ -1,4 +1,5 @@
-mod code;
+mod ast;
+mod bytecode;
 mod compile;
 mod engine;
 mod env;

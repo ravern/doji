@@ -1,7 +1,7 @@
 use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
-    code::{ConstantIndex, FunctionIndex},
+    bytecode::{ConstantIndex, FunctionIndex},
     value::{Function, String, Value},
 };
 

@@ -1,0 +1,80 @@
+WHITESPACE = _{ " " | "\t" | NEWLINE }
+COMMENT    = _{ "//" ~ ( !NEWLINE ~ ANY )* ~ NEWLINE }
+
+module = { SOI ~ statement* ~ expression? ~ EOI }
+
+statement = { let_statement | for_statement | while_statement | return_statement | break_statement | continue_statement | expression ~ ";" }
+
+let_statement      = { "let" ~ pattern ~ "=" ~ expression ~ ";" }
+for_statement      = { "for" ~ pattern ~ "in" ~ expression ~ block }
+while_statement    = { "while" ~ expression ~ block }
+return_statement   = { "return" ~ expression? ~ ";" }
+break_statement    = { "break" ~ ";" }
+continue_statement = { "continue" ~ ";" }
+
+block = { "{" ~ statement* ~ expression? ~ "}" }
+
+expression         =  { expression_prefix* ~ expression_primary ~ expression_postfix* ~ ( expression_infix ~ expression_prefix* ~ expression_primary ~ expression_postfix* )* }
+expression_prefix  = _{ neg | not | bit_not }
+expression_infix   = _{ add | sub | mul | div | rem | eq | neq | gt | gte | lt | lte | and | or | bit_and | bit_or | bit_xor | shl | shr }
+expression_postfix = _{ call_expression_postfix | member_expression_postfix | access_expression_postfix }
+expression_primary =  { group | block | if_expression | match_expression | fn_expression | map_expression | list_expression | identifier | literal }
+
+if_expression = { "if" ~ expression ~ block ~ if_else_if* ~ ( "else" ~ block )? }
+if_else_if    = { "else" ~ "if" ~ expression ~ block }
+
+match_expression     = { "match" ~ expression ~ "{" ~ ( match_arm ~ "," )+ ~ ( match_arm ~ ","? )? ~ "}" }
+match_arm            = { pattern ~ "=>" ~ match_arm_value }
+match_arm_value      = { block | expression }
+
+fn_expression       = { "fn" ~ "(" ~ ( pattern ~ "," )* ~ ( pattern ~ ","? )? ~ ")" ~ expression }
+map_expression      = { "{" ~  ( map_expression_pair ~ "," )* ~ ( map_expression_pair ~ ","? )? ~ "}" }
+map_expression_pair = { identifier ~ ( ":" ~ expression )? | "[" ~ expression ~ "]" ~ ":" ~ expression }
+list_expression     = { "[" ~  ( expression ~ "," )* ~ ( expression ~ ","? )? ~ "]" }
+
+call_expression_postfix   = { "(" ~ ( expression ~ "," )* ~ expression? ~ ")" }
+member_expression_postfix = { "." ~ identifier }
+access_expression_postfix = { "[" ~ expression ~ "]" }
+
+pattern = { map_pattern | list_pattern | wildcard | identifier }
+
+map_pattern      = { "{" ~  ( map_pattern_pair ~ "," )* ~ ( map_pattern_pair ~ ","? )? ~ "}" }
+map_pattern_pair = { identifier ~ ( ":" ~ pattern )? }
+list_pattern     = { "[" ~  ( pattern ~ "," )* ~ ( pattern ~ ","? )? ~ "]" }
+
+group = { "(" ~ expression ~ ")" }
+
+identifier = @{ ( ASCII_ALPHA | "_" ) ~ ( ASCII_ALPHANUMERIC | "_" )* }
+
+literal = { nil | int | float | bool }
+
+nil   =  { "nil" }
+bool  =  { "true" | "false" }
+int   = @{ ASCII_DIGIT+ }
+float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+wildcard = { "_" }
+
+neg     = { "-" }
+not     = { "!" }
+bit_not = { "~" }
+
+add     = { "+" }
+sub     = { "-" }
+mul     = { "*" }
+div     = { "/" }
+rem     = { "%" }
+eq      = { "==" }
+neq     = { "!=" }
+gte     = { ">=" }
+gt      = { ">" }
+lte     = { "<=" }
+lt      = { "<" }
+and     = { "&&" }
+or      = { "||" }
+bit_and = { "&" }
+bit_or  = { "|" }
+bit_xor = { "^" }
+shl     = { "<<" }
+shr     = { ">>" }
+

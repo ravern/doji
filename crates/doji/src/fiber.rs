@@ -5,7 +5,7 @@ use std::{
 };
 
 use crate::{
-    code::{self, CodeOffset, ConstantIndex, FunctionIndex, Instruction, StackSlot},
+    bytecode::{self, CodeOffset, ConstantIndex, FunctionIndex, Instruction, StackSlot},
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
     gc::{Handle, Heap, Trace, Tracer},
@@ -129,6 +129,8 @@ impl<'gc> Fiber<'gc> {
             Instruction::List => self.stack_push(Value::list_in(heap)),
             Instruction::Map => self.stack_push(Value::map_in(heap)),
 
+            Instruction::Int(int) => self.stack_push(Value::Int(int.into_usize() as i64)),
+
             Instruction::Constant(index) => {
                 let constant = self.constant(env, index)?;
                 self.stack_push(constant)
@@ -168,6 +170,7 @@ impl<'gc> Fiber<'gc> {
             Instruction::Load(slot) => self.stack_push(self.stack_get(slot)?),
             Instruction::Store(slot) => {
                 let value = self.stack_pop()?;
+                self.stack_push(value.clone());
                 self.stack_set(slot, value)?
             }
             Instruction::Duplicate => {
@@ -270,14 +273,14 @@ impl<'gc> Fiber<'gc> {
     fn capture_upvalue(
         &mut self,
         heap: &Heap<'gc>,
-        upvalue: &code::Upvalue,
+        upvalue: &bytecode::Upvalue,
     ) -> Result<UpvalueHandle<'gc>, Error> {
         match upvalue {
-            code::Upvalue::Local(slot) => Ok(UpvalueHandle::new_in(
+            bytecode::Upvalue::Local(slot) => Ok(UpvalueHandle::new_in(
                 heap,
                 self.stack.to_absolute_slot(*slot),
             )),
-            code::Upvalue::Upvalue(index) => {
+            bytecode::Upvalue::Upvalue(index) => {
                 let closure = self.stack_base_as_closure()?;
                 closure
                     .upvalue(*index)

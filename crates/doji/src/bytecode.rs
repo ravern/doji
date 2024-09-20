@@ -6,7 +6,7 @@ pub struct Chunk {
     pub code: Box<[Instruction]>,
 }
 
-#[derive(Debug)]
+#[derive(Clone, Copy, Debug)]
 pub enum Upvalue {
     Local(StackSlot),
     Upvalue(UpvalueIndex),
@@ -32,6 +32,7 @@ pub enum Instruction {
     Div,
     Rem,
     Eq,
+    Neq,
     Gt,
     Gte,
     Lt,
@@ -44,6 +45,8 @@ pub enum Instruction {
     BitOr,
     BitNot,
     BitXor,
+    Shl,
+    Shr,
 
     Load(StackSlot),
     Store(StackSlot),
@@ -64,7 +67,7 @@ pub enum Instruction {
 macro_rules! define_operand {
     ($name:ident) => {
         #[derive(Clone, Copy, Debug)]
-        pub struct $name(u32);
+        pub struct $name(pub u32);
 
         impl $name {
             pub fn into_usize(self) -> usize {
@@ -98,37 +101,3 @@ define_operand!(FunctionIndex);
 define_operand!(UpvalueIndex);
 define_operand!(StackSlot);
 define_operand!(ConstantIndex);
-
-pub struct ChunkBuilder {
-    upvalues: Vec<Upvalue>,
-    code: Vec<Instruction>,
-}
-
-impl ChunkBuilder {
-    pub fn new() -> ChunkBuilder {
-        ChunkBuilder {
-            upvalues: Vec::new(),
-            code: Vec::new(),
-        }
-    }
-
-    pub fn upvalue(mut self, upvalue: Upvalue) -> ChunkBuilder {
-        self.upvalues.push(upvalue);
-        self
-    }
-
-    pub fn code<I>(mut self, instructions: I) -> ChunkBuilder
-    where
-        I: IntoIterator<Item = Instruction>,
-    {
-        self.code.extend(instructions);
-        self
-    }
-
-    pub fn build(self) -> Chunk {
-        Chunk {
-            upvalues: self.upvalues.into(),
-            code: self.code.into(),
-        }
-    }
-}

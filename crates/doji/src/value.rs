@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    code::{self, Chunk, CodeOffset, Instruction, UpvalueIndex},
+    bytecode::{self, Chunk, CodeOffset, Instruction, UpvalueIndex},
     env::Environment,
     error::Error,
     fiber::{AbsoluteStackSlot, FiberHandle, FiberStack},
@@ -426,7 +426,7 @@ impl Function {
         self.chunk.code.len()
     }
 
-    pub fn upvalues(&self) -> &[code::Upvalue] {
+    pub fn upvalues(&self) -> &[bytecode::Upvalue] {
         &self.chunk.upvalues
     }
 
