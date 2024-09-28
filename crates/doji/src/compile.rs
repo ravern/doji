@@ -33,87 +33,6 @@ impl Compiler {
         let module = Parser {}.parse(source).unwrap();
         Generator {}.generate_module(env, module)
     }
-    // let index_two = env.add_constant(Value::Int(2));
-    // let index_four = env.add_constant(Value::Int(4));
-    // let index_add = env.add_constant(Value::NativeFunction(NativeFunctionHandle::new(
-    //     2,
-    //     |env, heap, stack| {
-    //         let right = stack.pop().unwrap();
-    //         let left = stack.pop().unwrap();
-    //         match (&left, &right) {
-    //             (Value::Int(left), Value::Int(right)) => {
-    //                 stack.set(StackSlot::from(0), Value::Int(left + right));
-    //                 Ok(())
-    //             }
-    //             _ => Err(Error::new(
-    //                 ErrorContext {
-    //                     code_offset: CodeOffset::from(0),
-    //                 },
-    //                 ErrorKind::WrongType(TypeError {
-    //                     expected: [ValueType::Int].into(),
-    //                     found: left.ty(),
-    //                 }),
-    //             )),
-    //         }
-    //     },
-    // )));
-    // Ok(Function::new(
-    //     0,
-    //     ChunkBuilder::new()
-    //         .code([
-    //             Instruction::Constant(index_add),
-    //             Instruction::Constant(index_two),
-    //             Instruction::Constant(index_four),
-    //             Instruction::Call(2),
-    //             Instruction::Store(StackSlot::from(0)),
-    //             Instruction::Return,
-    //         ])
-    //         .build(),
-    // ))
-
-    // Ok(Function::new(
-    //     0,
-    //     ChunkBuilder::new()
-    //         .code([
-    //             Instruction::Closure(
-    //                 env.add_function(Function::new(
-    //                     2,
-    //                     ChunkBuilder::new()
-    //                         .code([
-    //                             Instruction::Closure(
-    //                                 env.add_function(Function::new(
-    //                                     0,
-    //                                     ChunkBuilder::new()
-    //                                         .code([
-    //                                             Instruction::UpvalueLoad(UpvalueIndex::from(0)),
-    //                                             Instruction::UpvalueLoad(UpvalueIndex::from(1)),
-    //                                             Instruction::Add,
-    //                                             Instruction::Store(StackSlot::from(0)),
-    //                                             Instruction::Return,
-    //                                         ])
-    //                                         .upvalue(Upvalue::Local(StackSlot::from(1)))
-    //                                         .upvalue(Upvalue::Local(StackSlot::from(2)))
-    //                                         .build(),
-    //                                 )),
-    //                             ),
-    //                             Instruction::Store(StackSlot::from(0)),
-    //                             Instruction::UpvalueClose,
-    //                             Instruction::UpvalueClose,
-    //                             Instruction::Return,
-    //                         ])
-    //                         .build(),
-    //                 )),
-    //             ),
-    //             Instruction::Constant(env.add_constant(Value::Int(34))),
-    //             Instruction::Constant(env.add_constant(Value::Int(45))),
-    //             Instruction::Call(2),
-    //             Instruction::Call(0),
-    //             Instruction::Store(StackSlot::from(0)),
-    //             Instruction::Return,
-    //         ])
-    //         .build(),
-    // ))
-    // }
 }
 
 struct Generator {}
@@ -962,6 +881,8 @@ static PRATT_PARSER: Lazy<PrattParser<Rule>> = Lazy::new(|| {
 
 #[cfg(test)]
 mod tests {
+    use pretty_assertions::assert_eq;
+
     use crate::ast::{
         BinaryExpression, BinaryOperator, Block, Expression, FnExpression, Identifier, IntLiteral,
         LetStatement, Literal, MapExpression, MapExpressionKey, MapExpressionPair, Module, Pattern,
@@ -1034,7 +955,6 @@ mod tests {
         ";
         let parser = Parser {};
         let module = parser.parse(source).unwrap();
-        dbg!(&module);
         assert_eq!(
             module,
             Module {
@@ -1065,14 +985,14 @@ mod tests {
                                         }),
                                         value: Box::new(Expression::Identifier(Identifier {
                                             span: Span { start: 24, end: 25 },
-                                            identifier: "y".to_string(),
+                                            identifier: "x".to_string(),
                                         })),
                                     },
                                     MapExpressionPair {
                                         span: Span { start: 27, end: 29 },
                                         key: MapExpressionKey::Identifier(Identifier {
                                             span: Span { start: 27, end: 28 },
-                                            identifier: "x".to_string(),
+                                            identifier: "y".to_string(),
                                         }),
                                         value: Box::new(Expression::Identifier(Identifier {
                                             span: Span { start: 27, end: 28 },

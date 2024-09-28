@@ -50,7 +50,10 @@ mod tests {
         smol::block_on(async {
             let mut engine = Engine::new();
             let result = engine
-                .execute_str("test", "let x = 2; let y = 77; x + y")
+                .execute_str("test", "
+                let x = 2;
+                let y = 77;
+                x + y")
                 .await
                 .unwrap();
             assert_eq!(result, Value::Int(79));

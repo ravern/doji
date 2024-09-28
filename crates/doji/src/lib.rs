@@ -8,3 +8,5 @@ mod fiber;
 mod gc;
 mod native;
 mod value;
+
+pub use crate::engine::Engine;
