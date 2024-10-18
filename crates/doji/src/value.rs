@@ -10,7 +10,7 @@ use crate::{
     bytecode::{self, Chunk, CodeOffset, Instruction, UpvalueIndex},
     env::Environment,
     error::Error,
-    fiber::{AbsoluteStackSlot, FiberHandle, FiberStack},
+    fiber::{AbsoluteStackSlot, FiberStack, FiberValue},
     gc::{Handle, Heap, Trace, Tracer},
 };
 
@@ -76,26 +76,26 @@ pub enum Value<'gc> {
     Nil,
     Bool(bool),
     Int(i64),
-    Float(Float),
-    String(String),
-    List(ListHandle<'gc>),
-    Map(MapHandle<'gc>),
-    Closure(ClosureHandle<'gc>),
-    Fiber(FiberHandle<'gc>),
-    NativeFunction(NativeFunctionHandle),
+    Float(FloatValue),
+    String(StringValue<'gc>),
+    List(ListValue<'gc>),
+    Map(MapValue<'gc>),
+    Closure(ClosureValue<'gc>),
+    Fiber(FiberValue<'gc>),
+    NativeFunction(NativeFunctionValue),
 }
 
 impl<'gc> Value<'gc> {
     pub fn float(value: f64) -> Value<'gc> {
-        Value::Float(Float::from(value))
+        Value::Float(FloatValue::from(value))
     }
 
     pub fn list_in(heap: &Heap<'gc>) -> Value<'gc> {
-        Value::List(ListHandle::new_in(heap))
+        Value::List(ListValue::new_in(heap))
     }
 
     pub fn map_in(heap: &Heap<'gc>) -> Value<'gc> {
-        Value::Map(MapHandle::new_in(heap))
+        Value::Map(MapValue::new_in(heap))
     }
 
     pub fn closure_in(
@@ -103,7 +103,7 @@ impl<'gc> Value<'gc> {
         function: Function,
         upvalues: Box<[UpvalueHandle<'gc>]>,
     ) -> Value<'gc> {
-        Value::Closure(ClosureHandle::new_in(heap, function, upvalues))
+        Value::Closure(ClosureValue::new_in(heap, function, upvalues))
     }
 
     pub fn ty(&self) -> ValueType {
@@ -143,21 +143,18 @@ impl<'gc> Value<'gc> {
     pub fn neg(&self) -> Result<Value<'gc>, TypeError> {
         match self {
             Value::Int(value) => Ok(Value::Int(-value)),
-            Value::Float(value) => Ok(Value::Float(Float::from(-value.into_f64()))),
-            value => Err(TypeError {
-                expected: [ValueType::Int, ValueType::Float].into(),
-                found: value.ty(),
-            }),
+            Value::Float(value) => Ok(Value::Float(FloatValue::from(-value.into_f64()))),
+            value => Err(TypeError::new(
+                [ValueType::Int, ValueType::Float],
+                value.ty(),
+            )),
         }
     }
 
     pub fn not(&self) -> Result<Value<'gc>, TypeError> {
         match self {
             Value::Bool(value) => Ok(Value::Bool(!value)),
-            value => Err(TypeError {
-                expected: [ValueType::Bool].into(),
-                found: value.ty(),
-            }),
+            value => Err(TypeError::new([ValueType::Bool], value.ty())),
         }
     }
 
@@ -185,8 +182,8 @@ impl<'gc> Trace<'gc> for Value<'gc> {
             | Value::Bool(_)
             | Value::Int(_)
             | Value::Float(_)
-            | Value::String(_)
             | Value::NativeFunction(_) => {}
+            Value::String(string) => string.trace(tracer),
             Value::List(list) => list.trace(tracer),
             Value::Map(map) => map.trace(tracer),
             Value::Closure(closure) => closure.trace(tracer),
@@ -197,43 +194,101 @@ impl<'gc> Trace<'gc> for Value<'gc> {
 
 // FIXME: Should we really be deriving PartialEq here?
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Float(f64);
+pub struct FloatValue(f64);
 
-impl Float {
+impl FloatValue {
     pub fn into_f64(self) -> f64 {
         self.0
     }
 }
 
-impl From<f64> for Float {
+impl From<f64> for FloatValue {
     fn from(value: f64) -> Self {
-        Float(value)
+        FloatValue(value)
     }
 }
 
-impl Into<f64> for Float {
+impl Into<f64> for FloatValue {
     fn into(self) -> f64 {
         self.0
     }
 }
 
-impl Eq for Float {}
+impl Eq for FloatValue {}
 
-impl Hash for Float {
+impl Hash for FloatValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         self.0.to_bits().hash(state);
     }
 }
 
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
-pub struct String(Box<str>);
-
 #[derive(Debug)]
-pub struct ListHandle<'gc>(Handle<'gc, RefCell<Vec<Value<'gc>>>>);
+pub struct StringValue<'gc>(Handle<'gc, Box<str>>);
 
-impl<'gc> ListHandle<'gc> {
-    pub fn new_in(heap: &Heap<'gc>) -> ListHandle<'gc> {
-        ListHandle(heap.allocate(RefCell::new(Vec::new())).as_handle())
+impl<'gc> Clone for StringValue<'gc> {
+    fn clone(&self) -> Self {
+        StringValue(Handle::clone(&self.0))
+    }
+}
+
+impl<'gc> PartialEq for StringValue<'gc> {
+    fn eq(&self, other: &Self) -> bool {
+        Handle::ptr_eq(&self.0, &other.0) || &*self.0.root() == &*other.0.root()
+    }
+}
+
+impl<'gc> Eq for StringValue<'gc> {}
+
+impl<'gc> Hash for StringValue<'gc> {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        Box::<str>::hash(&self.0.root(), state);
+    }
+}
+
+impl<'gc> Trace<'gc> for StringValue<'gc> {
+    fn trace(&self, tracer: &Tracer) {
+        tracer.trace_handle(&self.0);
+    }
+}
+
+macro_rules! define_value {
+    ($name:ident, $lt:lifetime, $data:ty) => {
+        #[derive(Debug)]
+        pub struct $name<$lt>(Handle<$lt, $data>);
+
+        impl<$lt> Clone for $name<$lt> {
+            fn clone(&self) -> Self {
+                $name(Handle::clone(&self.0))
+            }
+        }
+
+        impl<$lt> PartialEq for $name<$lt> {
+            fn eq(&self, other: &Self) -> bool {
+                Handle::ptr_eq(&self.0, &other.0)
+            }
+        }
+
+        impl<$lt> Eq for $name<$lt> {}
+
+        impl<$lt> Hash for $name<$lt> {
+            fn hash<H: Hasher>(&self, state: &mut H) {
+                Handle::as_ptr(&self.0).hash(state);
+            }
+        }
+
+        impl<$lt> Trace<$lt> for $name<$lt> {
+            fn trace(&self, tracer: &Tracer) {
+                tracer.trace_handle(&self.0);
+            }
+        }
+    };
+}
+
+define_value!(ListValue, 'gc, RefCell<Vec<Value<'gc>>>);
+
+impl<'gc> ListValue<'gc> {
+    pub fn new_in(heap: &Heap<'gc>) -> ListValue<'gc> {
+        ListValue(heap.allocate(RefCell::new(Vec::new())).as_handle())
     }
 
     pub fn get(&self, index: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
@@ -256,7 +311,7 @@ impl<'gc> ListHandle<'gc> {
             let self_root = self.0.root();
             let mut self_ref = self_root.borrow_mut();
             // Resize if necessary
-            if index >= self.0.root().borrow().len() {
+            if index >= self_ref.len() {
                 self_ref.resize(index + 1, Value::Nil);
             }
             self_ref.insert(index, value);
@@ -267,38 +322,11 @@ impl<'gc> ListHandle<'gc> {
     }
 }
 
-impl<'gc> Clone for ListHandle<'gc> {
-    fn clone(&self) -> Self {
-        ListHandle(Handle::clone(&self.0))
-    }
-}
+define_value!(MapValue, 'gc, RefCell<HashMap<Value<'gc>, Value<'gc>>>);
 
-impl<'gc> PartialEq for ListHandle<'gc> {
-    fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl<'gc> Eq for ListHandle<'gc> {}
-
-impl<'gc> Hash for ListHandle<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.0).hash(state);
-    }
-}
-
-impl<'gc> Trace<'gc> for ListHandle<'gc> {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.0);
-    }
-}
-
-#[derive(Debug)]
-pub struct MapHandle<'gc>(Handle<'gc, RefCell<HashMap<Value<'gc>, Value<'gc>>>>);
-
-impl<'gc> MapHandle<'gc> {
-    pub fn new_in(heap: &Heap<'gc>) -> MapHandle<'gc> {
-        MapHandle(heap.allocate(RefCell::new(HashMap::new())).as_handle())
+impl<'gc> MapValue<'gc> {
+    pub fn new_in(heap: &Heap<'gc>) -> MapValue<'gc> {
+        MapValue(heap.allocate(RefCell::new(HashMap::new())).as_handle())
     }
 
     pub fn get(&self, key: &Value<'gc>) -> Result<Value<'gc>, TypeError> {
@@ -317,42 +345,15 @@ impl<'gc> MapHandle<'gc> {
     }
 }
 
-impl<'gc> Clone for MapHandle<'gc> {
-    fn clone(&self) -> Self {
-        MapHandle(Handle::clone(&self.0))
-    }
-}
+define_value!(ClosureValue, 'gc, Closure<'gc>);
 
-impl<'gc> PartialEq for MapHandle<'gc> {
-    fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl<'gc> Eq for MapHandle<'gc> {}
-
-impl<'gc> Hash for MapHandle<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.0).hash(state);
-    }
-}
-
-impl<'gc> Trace<'gc> for MapHandle<'gc> {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.0);
-    }
-}
-
-#[derive(Debug)]
-pub struct ClosureHandle<'gc>(Handle<'gc, Closure<'gc>>);
-
-impl<'gc> ClosureHandle<'gc> {
+impl<'gc> ClosureValue<'gc> {
     pub fn new_in(
         heap: &Heap<'gc>,
         function: Function,
         upvalues: Box<[UpvalueHandle<'gc>]>,
-    ) -> ClosureHandle<'gc> {
-        ClosureHandle(heap.allocate(Closure { function, upvalues }).as_handle())
+    ) -> ClosureValue<'gc> {
+        ClosureValue(heap.allocate(Closure { function, upvalues }).as_handle())
     }
 
     pub fn function(&self) -> Function {
@@ -365,32 +366,6 @@ impl<'gc> ClosureHandle<'gc> {
 
     pub fn upvalue(&self, index: UpvalueIndex) -> Option<UpvalueHandle<'gc>> {
         self.0.root().upvalues.get(index.into_usize()).cloned()
-    }
-}
-
-impl<'gc> Clone for ClosureHandle<'gc> {
-    fn clone(&self) -> Self {
-        ClosureHandle(Handle::clone(&self.0))
-    }
-}
-
-impl<'gc> PartialEq for ClosureHandle<'gc> {
-    fn eq(&self, other: &Self) -> bool {
-        Handle::ptr_eq(&self.0, &other.0)
-    }
-}
-
-impl<'gc> Eq for ClosureHandle<'gc> {}
-
-impl<'gc> Hash for ClosureHandle<'gc> {
-    fn hash<H: Hasher>(&self, state: &mut H) {
-        Handle::as_ptr(&self.0).hash(state);
-    }
-}
-
-impl<'gc> Trace<'gc> for ClosureHandle<'gc> {
-    fn trace(&self, tracer: &Tracer) {
-        tracer.trace_handle(&self.0);
     }
 }
 
@@ -509,11 +484,11 @@ impl<'gc> Trace<'gc> for Upvalue<'gc> {
 }
 
 #[derive(Debug)]
-pub struct NativeFunctionHandle(Rc<NativeFunction>);
+pub struct NativeFunctionValue(Rc<NativeFunction>);
 
-impl NativeFunctionHandle {
-    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunctionHandle {
-        NativeFunctionHandle(Rc::new(NativeFunction { arity, function }))
+impl NativeFunctionValue {
+    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunctionValue {
+        NativeFunctionValue(Rc::new(NativeFunction { arity, function }))
     }
 
     pub fn arity(&self) -> u8 {
@@ -530,21 +505,21 @@ impl NativeFunctionHandle {
     }
 }
 
-impl Clone for NativeFunctionHandle {
+impl Clone for NativeFunctionValue {
     fn clone(&self) -> Self {
-        NativeFunctionHandle(Rc::clone(&self.0))
+        NativeFunctionValue(Rc::clone(&self.0))
     }
 }
 
-impl PartialEq for NativeFunctionHandle {
+impl PartialEq for NativeFunctionValue {
     fn eq(&self, other: &Self) -> bool {
         Rc::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl Eq for NativeFunctionHandle {}
+impl Eq for NativeFunctionValue {}
 
-impl Hash for NativeFunctionHandle {
+impl Hash for NativeFunctionValue {
     fn hash<H: Hasher>(&self, state: &mut H) {
         Rc::as_ptr(&self.0).hash(state);
     }

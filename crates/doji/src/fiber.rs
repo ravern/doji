@@ -9,15 +9,15 @@ use crate::{
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
     gc::{Handle, Heap, Trace, Tracer},
-    value::{ClosureHandle, Function, TypeError, UpvalueHandle, Value, ValueType},
+    value::{ClosureValue, Function, TypeError, UpvalueHandle, Value, ValueType},
 };
 
 #[derive(Debug)]
-pub struct FiberHandle<'gc>(Handle<'gc, RefCell<Fiber<'gc>>>);
+pub struct FiberValue<'gc>(Handle<'gc, RefCell<Fiber<'gc>>>);
 
-impl<'gc> FiberHandle<'gc> {
-    pub fn new_in(heap: &Heap<'gc>, function: Function) -> FiberHandle<'gc> {
-        FiberHandle::new_with_stack_in(
+impl<'gc> FiberValue<'gc> {
+    pub fn new_in(heap: &Heap<'gc>, function: Function) -> FiberValue<'gc> {
+        FiberValue::new_with_stack_in(
             heap,
             function.clone(),
             FiberStack::new(Value::closure_in(heap, function, [].into())),
@@ -28,8 +28,8 @@ impl<'gc> FiberHandle<'gc> {
         heap: &Heap<'gc>,
         function: Function,
         stack: FiberStack<'gc>,
-    ) -> FiberHandle<'gc> {
-        FiberHandle(
+    ) -> FiberValue<'gc> {
+        FiberValue(
             heap.allocate(RefCell::new(Fiber {
                 function: function.clone(),
                 code_offset: CodeOffset::from(0),
@@ -44,27 +44,27 @@ impl<'gc> FiberHandle<'gc> {
     }
 }
 
-impl<'gc> Trace<'gc> for FiberHandle<'gc> {
+impl<'gc> Trace<'gc> for FiberValue<'gc> {
     fn trace(&self, tracer: &Tracer) {
         tracer.trace_handle(&self.0);
     }
 }
 
-impl<'gc> Clone for FiberHandle<'gc> {
+impl<'gc> Clone for FiberValue<'gc> {
     fn clone(&self) -> Self {
-        FiberHandle(Handle::clone(&self.0))
+        FiberValue(Handle::clone(&self.0))
     }
 }
 
-impl<'gc> PartialEq for FiberHandle<'gc> {
+impl<'gc> PartialEq for FiberValue<'gc> {
     fn eq(&self, other: &Self) -> bool {
         Handle::ptr_eq(&self.0, &other.0)
     }
 }
 
-impl<'gc> Eq for FiberHandle<'gc> {}
+impl<'gc> Eq for FiberValue<'gc> {}
 
-impl<'gc> Hash for FiberHandle<'gc> {
+impl<'gc> Hash for FiberValue<'gc> {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
         Handle::as_ptr(&self.0).hash(state);
     }
@@ -293,7 +293,7 @@ impl<'gc> Fiber<'gc> {
         self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
     }
 
-    fn stack_base_as_closure(&self) -> Result<ClosureHandle<'gc>, Error> {
+    fn stack_base_as_closure(&self) -> Result<ClosureValue<'gc>, Error> {
         if let Value::Closure(closure) = self.stack_get(StackSlot::from(0))? {
             Ok(closure)
         } else {

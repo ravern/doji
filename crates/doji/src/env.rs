@@ -2,7 +2,7 @@ use std::{cell::RefCell, collections::HashMap};
 
 use crate::{
     bytecode::{ConstantIndex, FunctionIndex},
-    value::{Function, String, Value},
+    value::{Function, Value},
 };
 
 pub struct Environment<'gc> {
@@ -27,7 +27,6 @@ impl<'gc> Environment<'gc> {
     pub fn module(&self, path: &String) -> Option<Value<'gc>> {
         self.modules.get(path)
     }
-
     pub fn add_constant(&self, constant: Value<'gc>) -> ConstantIndex {
         self.constants.add(constant)
     }

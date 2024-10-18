@@ -1,5 +1,5 @@
 use crate::{
-    compile::Compiler, env::Environment, error::Error, fiber::FiberHandle, gc::Heap,
+    compile::Compiler, env::Environment, error::Error, fiber::FiberValue, gc::Heap,
     native::NativeModule, value::Value,
 };
 
@@ -32,7 +32,7 @@ impl<'gc> Engine<'gc> {
     pub async fn execute_str(&mut self, path: &str, source: &str) -> Result<Value<'gc>, Error> {
         let function = self.compiler.compile(&self.env, source)?;
         dbg!(&function);
-        let mut fiber = FiberHandle::new_in(&self.heap, function);
+        let mut fiber = FiberValue::new_in(&self.heap, function);
         fiber.run(&self.env, &self.heap).await
     }
 
@@ -50,10 +50,13 @@ mod tests {
         smol::block_on(async {
             let mut engine = Engine::new();
             let result = engine
-                .execute_str("test", "
+                .execute_str(
+                    "test",
+                    "
                 let x = 2;
                 let y = 77;
-                x + y")
+                x + y",
+                )
                 .await
                 .unwrap();
             assert_eq!(result, Value::Int(79));

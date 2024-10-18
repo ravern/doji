@@ -205,6 +205,17 @@ pub enum Pattern {
     Identifier(Identifier),
 }
 
+impl Pattern {
+    pub fn span(&self) -> Span {
+        match self {
+            Pattern::Map(pattern) => pattern.span.clone(),
+            Pattern::List(pattern) => pattern.span.clone(),
+            Pattern::Wildcard(span) => span.clone(),
+            Pattern::Identifier(identifier) => identifier.span.clone(),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq)]
 pub struct MapPattern {
     pub span: Span,
@@ -274,7 +285,7 @@ pub struct Span {
 }
 
 impl Span {
-    pub fn join(&self, other: &Span) -> Span {
+    pub fn combine(&self, other: &Span) -> Span {
         Span {
             start: self.start.min(other.start),
             end: self.end.max(other.end),
