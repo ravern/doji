@@ -3,9 +3,12 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use crate::{
     ast::{
         BinaryExpression, BinaryOperator, Block, Expression, Identifier, LetStatement, Literal,
-        Module, Pattern, Statement,
+        Module, Pattern, Span, Statement,
     },
-    bytecode::{Chunk, CodeOffset, Instruction, IntImmediate, StackSlot, Upvalue, UpvalueIndex},
+    bytecode::{
+        Arity, Chunk, Instruction, InstructionOffset, IntImmediate, StackSlot, Upvalue,
+        UpvalueIndex,
+    },
     env::Environment,
     error::Error,
     parse::Parser,
@@ -33,14 +36,14 @@ impl Generator {
         env: &Environment<'gc>,
         module: Module,
     ) -> Result<Function, Error> {
-        let builder = ChunkBuilderHandle::new();
+        let builder = ChunkBuilderHandle::new(0.into());
         self.generate_block(env, &builder, module.block)?;
-        builder.push_code([
+        builder.push_instructions([
             Instruction::Store(StackSlot::from(0)),
             Instruction::Pop,
             Instruction::Return,
         ]);
-        Ok(Function::new(0, builder.build()))
+        Ok(Function::new(builder.build()))
     }
 
     fn generate_block<'gc>(
@@ -51,19 +54,19 @@ impl Generator {
     ) -> Result<(), Error> {
         builder.push_scope();
         builder.add_local("<block>".to_string());
-        builder.push_code([Instruction::Nil]);
+        builder.push_instructions([Instruction::Nil]);
         for statement in block.statements {
             self.generate_statement(env, builder, statement)?;
         }
         if let Some(expression) = block.return_expression {
             self.generate_expression(env, builder, *expression)?;
         } else {
-            builder.push_code([Instruction::Nil]);
+            builder.push_instructions([Instruction::Nil]);
         }
         let scope = builder.pop_scope();
-        builder.push_code([Instruction::Store(StackSlot::from(scope.base))]);
+        builder.push_instructions([Instruction::Store(StackSlot::from(scope.base))]);
         for _ in 0..scope.locals.len() {
-            builder.push_code([Instruction::Pop]);
+            builder.push_instructions([Instruction::Pop]);
         }
         Ok(())
     }
@@ -103,7 +106,7 @@ impl Generator {
             // }
             Statement::Expression(expression) => {
                 self.generate_expression(env, builder, expression)?;
-                builder.push_code([Instruction::Pop]);
+                builder.push_instructions([Instruction::Pop]);
                 Ok(())
             }
             _ => unimplemented!(),
@@ -180,24 +183,24 @@ impl Generator {
         self.generate_expression(env, builder, *binary_expression.left)?;
         self.generate_expression(env, builder, *binary_expression.right)?;
         match binary_expression.operator {
-            BinaryOperator::Add => builder.push_code([Instruction::Add]),
-            BinaryOperator::Sub => builder.push_code([Instruction::Sub]),
-            BinaryOperator::Mul => builder.push_code([Instruction::Mul]),
-            BinaryOperator::Div => builder.push_code([Instruction::Div]),
-            BinaryOperator::Rem => builder.push_code([Instruction::Rem]),
-            BinaryOperator::Eq => builder.push_code([Instruction::Eq]),
-            BinaryOperator::Neq => builder.push_code([Instruction::Neq]),
-            BinaryOperator::Gt => builder.push_code([Instruction::Gt]),
-            BinaryOperator::Gte => builder.push_code([Instruction::Gte]),
-            BinaryOperator::Lt => builder.push_code([Instruction::Lt]),
-            BinaryOperator::Lte => builder.push_code([Instruction::Lte]),
-            BinaryOperator::And => builder.push_code([Instruction::And]),
-            BinaryOperator::Or => builder.push_code([Instruction::Or]),
-            BinaryOperator::BitAnd => builder.push_code([Instruction::BitAnd]),
-            BinaryOperator::BitOr => builder.push_code([Instruction::BitOr]),
-            BinaryOperator::BitXor => builder.push_code([Instruction::BitXor]),
-            BinaryOperator::Shl => builder.push_code([Instruction::Shl]),
-            BinaryOperator::Shr => builder.push_code([Instruction::Shr]),
+            BinaryOperator::Add => builder.push_instructions([Instruction::Add]),
+            BinaryOperator::Sub => builder.push_instructions([Instruction::Sub]),
+            BinaryOperator::Mul => builder.push_instructions([Instruction::Mul]),
+            BinaryOperator::Div => builder.push_instructions([Instruction::Div]),
+            BinaryOperator::Rem => builder.push_instructions([Instruction::Rem]),
+            BinaryOperator::Eq => builder.push_instructions([Instruction::Eq]),
+            BinaryOperator::Neq => builder.push_instructions([Instruction::Neq]),
+            BinaryOperator::Gt => builder.push_instructions([Instruction::Gt]),
+            BinaryOperator::Gte => builder.push_instructions([Instruction::Gte]),
+            BinaryOperator::Lt => builder.push_instructions([Instruction::Lt]),
+            BinaryOperator::Lte => builder.push_instructions([Instruction::Lte]),
+            BinaryOperator::And => builder.push_instructions([Instruction::And]),
+            BinaryOperator::Or => builder.push_instructions([Instruction::Or]),
+            BinaryOperator::BitAnd => builder.push_instructions([Instruction::BitAnd]),
+            BinaryOperator::BitOr => builder.push_instructions([Instruction::BitOr]),
+            BinaryOperator::BitXor => builder.push_instructions([Instruction::BitXor]),
+            BinaryOperator::Shl => builder.push_instructions([Instruction::Shl]),
+            BinaryOperator::Shr => builder.push_instructions([Instruction::Shr]),
         }
         Ok(())
     }
@@ -209,10 +212,10 @@ impl Generator {
         identifier: Identifier,
     ) -> Result<(), Error> {
         if let Some(slot) = builder.local(&identifier.identifier) {
-            builder.push_code([Instruction::Load(slot)]);
+            builder.push_instructions([Instruction::Load(slot)]);
             Ok(())
         } else if let Some(index) = builder.resolve_upvalue(&identifier.identifier) {
-            builder.push_code([Instruction::UpvalueLoad(index)]);
+            builder.push_instructions([Instruction::UpvalueLoad(index)]);
             Ok(())
         } else {
             unimplemented!()
@@ -227,7 +230,7 @@ impl Generator {
     ) -> Result<(), Error> {
         match literal {
             Literal::Int(int_literal) => {
-                builder.push_code([Instruction::Int(IntImmediate(int_literal.value))]);
+                builder.push_instructions([Instruction::Int(IntImmediate(int_literal.value))]);
                 Ok(())
             }
             _ => unimplemented!(),
@@ -238,21 +241,23 @@ impl Generator {
 struct ChunkBuilderHandle(Rc<RefCell<ChunkBuilder>>);
 
 impl ChunkBuilderHandle {
-    fn new() -> ChunkBuilderHandle {
+    fn new(arity: Arity) -> ChunkBuilderHandle {
         ChunkBuilderHandle(Rc::new(RefCell::new(ChunkBuilder {
             parent: None,
             frame: Frame::new(),
+            arity,
             upvalues: Vec::new(),
-            code: Vec::new(),
+            instructions: Vec::new(),
         })))
     }
 
-    fn with_parent(parent: ChunkBuilderHandle) -> ChunkBuilderHandle {
+    fn with_parent(parent: ChunkBuilderHandle, arity: Arity) -> ChunkBuilderHandle {
         ChunkBuilderHandle(Rc::new(RefCell::new(ChunkBuilder {
             parent: Some(parent),
             frame: Frame::new(),
+            arity,
             upvalues: Vec::new(),
-            code: Vec::new(),
+            instructions: Vec::new(),
         })))
     }
 
@@ -276,11 +281,11 @@ impl ChunkBuilderHandle {
         self.0.borrow_mut().pop_scope()
     }
 
-    fn push_code<I>(&self, instructions: I)
+    fn push_instructions<I>(&self, instructions: I)
     where
         I: IntoIterator<Item = Instruction>,
     {
-        self.0.borrow_mut().push_code(instructions);
+        self.0.borrow_mut().push_instructions(instructions);
     }
 
     fn build(&self) -> Chunk {
@@ -294,16 +299,18 @@ impl Clone for ChunkBuilderHandle {
     }
 }
 
+// we can't just use a simple mutable borrow here because of this issue: `Option<&'p mut ChunkBuilder<???>>`.
 struct ChunkBuilder {
     parent: Option<ChunkBuilderHandle>,
     frame: Frame,
+    arity: Arity,
     upvalues: Vec<Upvalue>,
-    code: Vec<Instruction>,
+    instructions: Vec<Instruction>,
 }
 
 impl ChunkBuilder {
-    fn code_offset(&self) -> CodeOffset {
-        self.code.len().into()
+    fn instruction_offset(&self) -> InstructionOffset {
+        self.instructions.len().into()
     }
 
     fn resolve_upvalue(&mut self, identifier: &str) -> Option<UpvalueIndex> {
@@ -342,17 +349,18 @@ impl ChunkBuilder {
         self.frame.pop_scope()
     }
 
-    fn push_code<I>(&mut self, instructions: I)
+    fn push_instructions<I>(&mut self, instructions: I)
     where
         I: IntoIterator<Item = Instruction>,
     {
-        self.code.extend(instructions);
+        self.instructions.extend(instructions);
     }
 
     fn build(&self) -> Chunk {
         Chunk {
+            arity: self.arity,
             upvalues: self.upvalues.clone().into(),
-            code: self.code.clone().into(),
+            instructions: self.instructions.clone().into(),
         }
     }
 }

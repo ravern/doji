@@ -7,7 +7,7 @@ use std::{
 };
 
 use crate::{
-    bytecode::{self, Chunk, CodeOffset, Instruction, UpvalueIndex},
+    bytecode::{self, Arity, Chunk, Instruction, InstructionOffset, UpvalueIndex},
     env::Environment,
     error::Error,
     fiber::{AbsoluteStackSlot, FiberStack, FiberValue},
@@ -360,8 +360,8 @@ impl<'gc> ClosureValue<'gc> {
         self.0.root().function.clone()
     }
 
-    pub fn arity(&self) -> u8 {
-        self.0.root().function.arity
+    pub fn arity(&self) -> Arity {
+        self.0.root().function.arity()
     }
 
     pub fn upvalue(&self, index: UpvalueIndex) -> Option<UpvalueHandle<'gc>> {
@@ -384,38 +384,33 @@ impl<'gc> Trace<'gc> for Closure<'gc> {
 }
 
 #[derive(Debug)]
-pub struct Function {
-    arity: u8,
-    chunk: Rc<Chunk>,
-}
+pub struct Function(Rc<Chunk>);
 
 impl Function {
-    pub fn new(arity: u8, chunk: Chunk) -> Function {
-        Function {
-            arity,
-            chunk: Rc::new(chunk),
-        }
+    pub fn new(chunk: Chunk) -> Function {
+        Function(Rc::new(chunk))
+    }
+
+    pub fn arity(&self) -> Arity {
+        self.0.arity
     }
 
     pub fn size(&self) -> usize {
-        self.chunk.code.len()
+        self.0.instructions.len()
     }
 
     pub fn upvalues(&self) -> &[bytecode::Upvalue] {
-        &self.chunk.upvalues
+        &self.0.upvalues
     }
 
-    pub fn instruction(&self, offset: CodeOffset) -> Option<Instruction> {
-        self.chunk.code.get(offset.into_usize()).copied()
+    pub fn instruction(&self, offset: InstructionOffset) -> Option<Instruction> {
+        self.0.instructions.get(offset.into_usize()).copied()
     }
 }
 
 impl Clone for Function {
     fn clone(&self) -> Self {
-        Function {
-            arity: self.arity,
-            chunk: Rc::clone(&self.chunk),
-        }
+        Function(Rc::clone(&self.0))
     }
 }
 
@@ -487,11 +482,11 @@ impl<'gc> Trace<'gc> for Upvalue<'gc> {
 pub struct NativeFunctionValue(Rc<NativeFunction>);
 
 impl NativeFunctionValue {
-    pub fn new(arity: u8, function: NativeFunctionFn) -> NativeFunctionValue {
+    pub fn new(arity: Arity, function: NativeFunctionFn) -> NativeFunctionValue {
         NativeFunctionValue(Rc::new(NativeFunction { arity, function }))
     }
 
-    pub fn arity(&self) -> u8 {
+    pub fn arity(&self) -> Arity {
         self.0.arity
     }
 
@@ -530,7 +525,7 @@ pub type NativeFunctionFn =
 
 #[derive(Debug)]
 struct NativeFunction {
-    arity: u8,
+    arity: Arity,
     function: NativeFunctionFn,
 }
 

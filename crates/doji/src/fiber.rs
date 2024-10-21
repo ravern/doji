@@ -5,7 +5,9 @@ use std::{
 };
 
 use crate::{
-    bytecode::{self, CodeOffset, ConstantIndex, FunctionIndex, Instruction, StackSlot},
+    bytecode::{
+        self, Arity, ConstantIndex, FunctionIndex, Instruction, InstructionOffset, StackSlot,
+    },
     env::Environment,
     error::{Error, ErrorContext, ErrorKind},
     gc::{Handle, Heap, Trace, Tracer},
@@ -32,7 +34,7 @@ impl<'gc> FiberValue<'gc> {
         FiberValue(
             heap.allocate(RefCell::new(Fiber {
                 function: function.clone(),
-                code_offset: CodeOffset::from(0),
+                instruction_offset: InstructionOffset::from(0),
                 stack,
             }))
             .as_handle(),
@@ -78,7 +80,7 @@ enum FiberStep<'gc> {
 #[derive(Debug)]
 struct Fiber<'gc> {
     function: Function,
-    code_offset: CodeOffset,
+    instruction_offset: InstructionOffset,
     stack: FiberStack<'gc>,
 }
 
@@ -196,11 +198,11 @@ impl<'gc> Fiber<'gc> {
                 }
             }
             Instruction::Jump(offset) => {
-                self.code_offset = offset;
+                self.instruction_offset = offset;
             }
 
             Instruction::Call(arity) => {
-                let value_slot = StackSlot::from(self.stack.size() - (arity as usize) - 1);
+                let value_slot = StackSlot::from(self.stack.size() - (arity.into_usize()) - 1);
                 let value = self.stack_get(value_slot)?;
                 match value {
                     Value::Closure(closure) => {
@@ -222,7 +224,7 @@ impl<'gc> Fiber<'gc> {
                         }
                         self.stack_push_frame(arity);
                         native.call(env, heap, &mut self.stack)?;
-                        self.code_offset = self.stack.pop_frame().unwrap();
+                        self.instruction_offset = self.stack.pop_frame().unwrap();
                     }
                     _ => {
                         return Err(self.error(ErrorKind::WrongType(TypeError {
@@ -234,7 +236,7 @@ impl<'gc> Fiber<'gc> {
             }
             Instruction::Return => {
                 if let Some(offset) = self.stack.pop_frame() {
-                    self.code_offset = offset;
+                    self.instruction_offset = offset;
                     self.function = self.stack_base_as_closure()?.function();
                 } else {
                     return Ok(FiberStep::Done(self.stack_pop()?));
@@ -245,9 +247,9 @@ impl<'gc> Fiber<'gc> {
                 let closure = self.stack_base_as_closure()?;
                 let upvalue = closure
                     .upvalue(index)
-                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(index)))?;
+                    .ok_or_else(|| self.error(ErrorKind::UpvalueIndex(index)))?;
                 let value = upvalue.get_in(&self.stack).ok_or_else(|| {
-                    self.error(ErrorKind::InvalidAbsoluteStackSlot(upvalue.slot().unwrap()))
+                    self.error(ErrorKind::AbsoluteStackSlot(upvalue.slot().unwrap()))
                 })?;
                 self.stack_push(value);
             }
@@ -255,7 +257,7 @@ impl<'gc> Fiber<'gc> {
                 let closure = self.stack_base_as_closure()?;
                 let upvalue = closure
                     .upvalue(index)
-                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(index)))?;
+                    .ok_or_else(|| self.error(ErrorKind::UpvalueIndex(index)))?;
                 let value = self.stack_pop()?;
                 upvalue.set_in(&mut self.stack, value);
             }
@@ -284,13 +286,13 @@ impl<'gc> Fiber<'gc> {
                 let closure = self.stack_base_as_closure()?;
                 closure
                     .upvalue(*index)
-                    .ok_or_else(|| self.error(ErrorKind::InvalidUpvalueIndex(*index)))
+                    .ok_or_else(|| self.error(ErrorKind::UpvalueIndex(*index)))
             }
         }
     }
 
     fn advance_code_offset(&mut self) {
-        self.code_offset = CodeOffset::from(self.code_offset.into_usize() + 1);
+        self.instruction_offset = InstructionOffset::from(self.instruction_offset.into_usize() + 1);
     }
 
     fn stack_base_as_closure(&self) -> Result<ClosureValue<'gc>, Error> {
@@ -304,14 +306,14 @@ impl<'gc> Fiber<'gc> {
     fn stack_set(&mut self, slot: StackSlot, value: Value<'gc>) -> Result<(), Error> {
         self.stack
             .set(slot, value)
-            .ok_or_else(|| self.error(ErrorKind::InvalidStackSlot(slot)))?;
+            .ok_or_else(|| self.error(ErrorKind::StackSlot(slot)))?;
         Ok(())
     }
 
     fn stack_get(&self, slot: StackSlot) -> Result<Value<'gc>, Error> {
         self.stack
             .get(slot)
-            .ok_or_else(|| self.error(ErrorKind::InvalidStackSlot(slot)))
+            .ok_or_else(|| self.error(ErrorKind::StackSlot(slot)))
     }
 
     fn stack_pop(&mut self) -> Result<Value<'gc>, Error> {
@@ -324,31 +326,32 @@ impl<'gc> Fiber<'gc> {
         self.stack.push(value);
     }
 
-    fn stack_push_frame(&mut self, arity: u8) {
-        let code_offset = self.code_offset.into_usize();
+    fn stack_push_frame(&mut self, arity: Arity) {
+        let code_offset = self.instruction_offset.into_usize();
         self.stack.push_frame(arity, code_offset);
-        self.code_offset = CodeOffset::from(0);
+        self.instruction_offset = InstructionOffset::from(0);
     }
 
     fn instruction(&self) -> Result<Instruction, Error> {
         self.function
-            .instruction(self.code_offset)
-            .ok_or_else(|| self.error(ErrorKind::CodeOffsetOutOfBounds))
+            .instruction(self.instruction_offset)
+            .ok_or_else(|| self.error(ErrorKind::InstructionOffset))
     }
 
     fn constant(&self, env: &Environment<'gc>, index: ConstantIndex) -> Result<Value<'gc>, Error> {
         env.constant(index)
-            .ok_or_else(|| self.error(ErrorKind::InvalidConstantIndex(index)))
+            .ok_or_else(|| self.error(ErrorKind::ConstantIndex(index)))
     }
 
     fn function(&self, env: &Environment<'gc>, index: FunctionIndex) -> Result<Function, Error> {
         env.function(index)
-            .ok_or_else(|| self.error(ErrorKind::InvalidFunctionIndex(index)))
+            .ok_or_else(|| self.error(ErrorKind::FunctionIndex(index)))
     }
 
     fn error(&self, kind: ErrorKind) -> Error {
         let context = ErrorContext {
-            code_offset: CodeOffset::from(self.code_offset.into_usize() - 1),
+            function: self.function.clone(),
+            instruction_offset: InstructionOffset::from(self.instruction_offset.into_usize() - 1),
         };
         Error::new(context, kind)
     }
@@ -416,19 +419,19 @@ impl<'gc> FiberStack<'gc> {
         self.values.pop()
     }
 
-    pub fn push_frame(&mut self, arity: u8, code_offset: usize) {
+    pub fn push_frame(&mut self, arity: Arity, code_offset: usize) {
         self.frames.push(StackFrame {
             stack_base: self.base,
             code_offset,
         });
-        self.base = self.values.len() - (arity as usize) - 1;
+        self.base = self.values.len() - arity.into_usize() - 1;
     }
 
-    pub fn pop_frame(&mut self) -> Option<CodeOffset> {
+    pub fn pop_frame(&mut self) -> Option<InstructionOffset> {
         let frame = self.frames.pop();
         if let Some(frame) = frame {
             self.base = frame.stack_base;
-            Some(CodeOffset::from(frame.code_offset))
+            Some(InstructionOffset::from(frame.code_offset))
         } else {
             None
         }

@@ -2,8 +2,9 @@ use std::fmt::{self, Display, Formatter};
 
 #[derive(Debug)]
 pub struct Chunk {
+    pub arity: Arity,
     pub upvalues: Box<[Upvalue]>,
-    pub code: Box<[Instruction]>,
+    pub instructions: Box<[Instruction]>,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -54,9 +55,9 @@ pub enum Instruction {
     Pop,
 
     Test,
-    Jump(CodeOffset),
+    Jump(InstructionOffset),
 
-    Call(u8),
+    Call(Arity),
     Return,
 
     UpvalueLoad(UpvalueIndex),
@@ -66,7 +67,7 @@ pub enum Instruction {
 
 macro_rules! define_operand {
     ($name:ident) => {
-        #[derive(Clone, Copy, Debug)]
+        #[derive(Clone, Copy, Debug, Eq, PartialEq)]
         pub struct $name(pub u32);
 
         impl $name {
@@ -95,9 +96,10 @@ macro_rules! define_operand {
     };
 }
 
-define_operand!(CodeOffset);
+define_operand!(Arity);
+define_operand!(InstructionOffset);
 define_operand!(IntImmediate);
+define_operand!(ConstantIndex);
 define_operand!(FunctionIndex);
 define_operand!(UpvalueIndex);
 define_operand!(StackSlot);
-define_operand!(ConstantIndex);

@@ -1,9 +1,9 @@
 use std::fmt::{self, Display, Formatter};
 
 use crate::{
-    bytecode::{CodeOffset, ConstantIndex, FunctionIndex, StackSlot, UpvalueIndex},
+    bytecode::{Arity, ConstantIndex, FunctionIndex, InstructionOffset, StackSlot, UpvalueIndex},
     fiber::AbsoluteStackSlot,
-    value::TypeError,
+    value::{Function, TypeError},
 };
 
 #[derive(Debug)]
@@ -26,26 +26,46 @@ impl Error {
     }
 }
 
+#[derive(Debug)]
+pub struct ErrorContext {
+    pub function: Function,
+    pub instruction_offset: InstructionOffset,
+}
+
+#[derive(Debug)]
+pub enum ErrorKind {
+    StackUnderflow,
+    FirstStackSlotNotClosure,
+    InstructionOffset,
+    StackSlot(StackSlot),
+    AbsoluteStackSlot(AbsoluteStackSlot),
+    ConstantIndex(ConstantIndex),
+    FunctionIndex(FunctionIndex),
+    UpvalueIndex(UpvalueIndex),
+    WrongArity { expected: Arity, found: Arity },
+    WrongType(TypeError),
+}
+
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}: ", self.context.code_offset)?;
+        write!(f, "{}: ", self.context.instruction_offset)?;
         match &self.kind {
-            ErrorKind::CodeOffsetOutOfBounds => write!(f, "code offset out of bounds"),
+            ErrorKind::InstructionOffset => write!(f, "invalid instruction offset"),
             ErrorKind::StackUnderflow => write!(f, "stack underflow"),
-            ErrorKind::InvalidAbsoluteStackSlot(slot) => {
+            ErrorKind::AbsoluteStackSlot(slot) => {
                 write!(f, "invalid absolute stack slot: {}", slot)
             }
             ErrorKind::FirstStackSlotNotClosure => {
                 write!(f, "expected first stack slot to be a closure")
             }
-            ErrorKind::InvalidStackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
-            ErrorKind::InvalidConstantIndex(index) => {
+            ErrorKind::StackSlot(slot) => write!(f, "invalid stack slot: {}", slot),
+            ErrorKind::ConstantIndex(index) => {
                 write!(f, "invalid constant index: {}", index)
             }
-            ErrorKind::InvalidFunctionIndex(index) => {
+            ErrorKind::FunctionIndex(index) => {
                 write!(f, "invalid function index: {}", index)
             }
-            ErrorKind::InvalidUpvalueIndex(index) => {
+            ErrorKind::UpvalueIndex(index) => {
                 write!(f, "invalid upvalue index: {}", index)
             }
             ErrorKind::WrongType(error) => write!(f, "{}", error),
@@ -54,23 +74,4 @@ impl Display for Error {
             }
         }
     }
-}
-
-#[derive(Debug)]
-pub struct ErrorContext {
-    pub code_offset: CodeOffset,
-}
-
-#[derive(Debug)]
-pub enum ErrorKind {
-    CodeOffsetOutOfBounds,
-    StackUnderflow,
-    InvalidStackSlot(StackSlot),
-    FirstStackSlotNotClosure,
-    InvalidAbsoluteStackSlot(AbsoluteStackSlot),
-    InvalidConstantIndex(ConstantIndex),
-    InvalidFunctionIndex(FunctionIndex),
-    InvalidUpvalueIndex(UpvalueIndex),
-    WrongType(TypeError),
-    WrongArity { expected: u8, found: u8 },
 }
