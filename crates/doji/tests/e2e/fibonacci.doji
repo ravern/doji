@@ -1,0 +1,9 @@
+let fibonacci = fn (n) {
+    if n < 2 {
+        n
+    } else {
+        fibonacci(n - 2) + fibonacci(n - 1)
+    }
+};
+
+assert fibonacci(6) == 8;

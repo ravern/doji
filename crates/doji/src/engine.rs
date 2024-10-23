@@ -30,36 +30,8 @@ impl<'gc> Engine<'gc> {
     }
 
     pub async fn execute_str(&mut self, path: &str, source: &str) -> Result<Value<'gc>, Error> {
-        let function = self.compiler.compile(&self.env, source)?;
-        dbg!(&function);
-        let mut fiber = FiberValue::new_in(&self.heap, function);
+        let function = self.compiler.compile(&self.env, &self.heap, source)?;
+        let fiber = FiberValue::new_in(&self.heap, function);
         fiber.run(&self.env, &self.heap).await
-    }
-
-    pub async fn execute_file(path: &str) -> Result<Value<'gc>, Error> {
-        Ok(Value::Nil)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_execute_str() {
-        smol::block_on(async {
-            let mut engine = Engine::new();
-            let result = engine
-                .execute_str(
-                    "test",
-                    "
-                let x = 2;
-                let y = 77;
-                x + y",
-                )
-                .await
-                .unwrap();
-            assert_eq!(result, Value::Int(79));
-        });
     }
 }

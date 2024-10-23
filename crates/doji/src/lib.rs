@@ -10,4 +10,4 @@ mod native;
 mod parse;
 mod value;
 
-pub use crate::engine::Engine;
+pub use crate::{engine::Engine, value::Value};

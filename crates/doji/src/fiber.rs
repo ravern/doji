@@ -266,6 +266,24 @@ impl<'gc> Fiber<'gc> {
                     .close_upvalue(StackSlot::from(self.stack.size() - 1));
             }
 
+            Instruction::ObjectGet => {
+                let key = self.stack_pop()?;
+                let object = self.stack_pop()?;
+                let value = object
+                    .get(&key)
+                    .map_err(|error| self.error(ErrorKind::WrongType(error)))?;
+                self.stack_push(value);
+            }
+            Instruction::ObjectSet => {
+                let value = self.stack_pop()?;
+                let key = self.stack_pop()?;
+                let object = self.stack_pop()?;
+                object
+                    .set(key, value.clone())
+                    .map_err(|error| self.error(ErrorKind::WrongType(error)))?;
+                self.stack_push(value);
+            }
+
             _ => todo!(),
         }
 

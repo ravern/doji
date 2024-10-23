@@ -86,8 +86,24 @@ pub enum Value<'gc> {
 }
 
 impl<'gc> Value<'gc> {
-    pub fn float(value: f64) -> Value<'gc> {
-        Value::Float(FloatValue::from(value))
+    pub fn nil() -> Value<'gc> {
+        Value::Nil
+    }
+
+    pub fn bool(bool: bool) -> Value<'gc> {
+        Value::Bool(bool)
+    }
+
+    pub fn int(int: i64) -> Value<'gc> {
+        Value::Int(int)
+    }
+
+    pub fn float(float: f64) -> Value<'gc> {
+        Value::Float(FloatValue::from(float))
+    }
+
+    pub fn string_in(heap: &Heap<'gc>, string: String) -> Value<'gc> {
+        Value::String(StringValue::new_in(heap, string))
     }
 
     pub fn list_in(heap: &Heap<'gc>) -> Value<'gc> {
@@ -224,6 +240,12 @@ impl Hash for FloatValue {
 
 #[derive(Debug)]
 pub struct StringValue<'gc>(Handle<'gc, Box<str>>);
+
+impl<'gc> StringValue<'gc> {
+    pub fn new_in(heap: &Heap<'gc>, value: String) -> StringValue<'gc> {
+        StringValue(heap.allocate(value.into_boxed_str()).as_handle())
+    }
+}
 
 impl<'gc> Clone for StringValue<'gc> {
     fn clone(&self) -> Self {

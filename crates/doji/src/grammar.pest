@@ -18,7 +18,7 @@ expression         =  { expression_prefix* ~ expression_primary ~ expression_pos
 expression_prefix  = _{ neg | not | bit_not }
 expression_infix   = _{ add | sub | mul | div | rem | eq | neq | gt | gte | lt | lte | and | or | bit_and | bit_or | bit_xor | shl | shr }
 expression_postfix = _{ call_expression_postfix | member_expression_postfix | access_expression_postfix }
-expression_primary =  { group | block | if_expression | match_expression | fn_expression | map_expression | list_expression | identifier | literal }
+expression_primary =  { literal | group | block | if_expression | match_expression | fn_expression | map_expression | list_expression | identifier }
 
 if_expression = { "if" ~ expression ~ block ~ if_else_if* ~ ( "else" ~ block )? }
 if_else_if    = { "else" ~ "if" ~ expression ~ block }
@@ -46,7 +46,7 @@ group = { "(" ~ expression ~ ")" }
 
 identifier = @{ ( ASCII_ALPHA | "_" ) ~ ( ASCII_ALPHANUMERIC | "_" )* }
 
-literal = { nil | int | float | bool }
+literal = { nil | float | int | bool }
 
 nil   =  { "nil" }
 bool  =  { "true" | "false" }

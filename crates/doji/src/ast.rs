@@ -197,7 +197,7 @@ pub struct ListExpression {
     pub items: Box<[Expression]>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum Pattern {
     Map(MapPattern),
     List(ListPattern),
@@ -216,20 +216,20 @@ impl Pattern {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapPattern {
     pub span: Span,
     pub pairs: Box<[MapPatternPair]>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct MapPatternPair {
     pub span: Span,
     pub key: Identifier,
     pub value: Option<Pattern>,
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct ListPattern {
     pub span: Span,
     pub items: Box<[Pattern]>,

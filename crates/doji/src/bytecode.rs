@@ -63,6 +63,9 @@ pub enum Instruction {
     UpvalueLoad(UpvalueIndex),
     UpvalueStore(UpvalueIndex),
     UpvalueClose,
+
+    ObjectGet,
+    ObjectSet,
 }
 
 macro_rules! define_operand {

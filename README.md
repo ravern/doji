@@ -2,6 +2,23 @@
 
 Practical scripting language for Rust.
 
+## Roadmap
+
+- [ ] Compilation
+  - [ ] Support closing of upvalues
+  - [ ] Support `if` expressions
+  - [ ] Support early returns
+  - [ ] Refactor `Frame` and `Scope` structs
+  - [ ] Add proper identifier pool (instead of `String` cloning)
+- [ ] Debugging
+  - [ ] Add displaying of chunks (with chunk names, identifiers from context)
+- [ ] Testing
+  - [x] Add structured e2e test harness
+  - [ ] Add e2e test for each language feature
+    - [ ] Literals
+    - [ ] Functions
+    - [ ] Fibers
+
 ## Guide
 
 Here is the "Hello, world!" program for Dōji.
