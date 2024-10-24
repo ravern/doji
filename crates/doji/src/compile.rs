@@ -3,9 +3,9 @@ use std::{cell::RefCell, collections::HashMap, rc::Rc};
 use crate::{
     ast::{
         AccessExpression, BinaryExpression, BinaryOperator, Block, CallExpression, Expression,
-        FnExpression, Identifier, LetStatement, ListExpression, Literal, MapExpression,
-        MapExpressionKey, MapExpressionPair, MemberExpression, Module, Pattern, Statement,
-        UnaryExpression, UnaryOperator,
+        FnExpression, Identifier, IfExpression, LetStatement, ListExpression, Literal,
+        MapExpression, MapExpressionKey, MapExpressionPair, MemberExpression, Module, Pattern,
+        Statement, UnaryExpression, UnaryOperator,
     },
     bytecode::{
         Arity, Chunk, Instruction, InstructionOffset, IntImmediate, StackSlot, Upvalue,
@@ -42,12 +42,9 @@ impl Generator {
         module: Module,
     ) -> Result<Function, Error> {
         let builder = ChunkBuilderHandle::new(0.into());
+        builder.add_fresh_local("module".to_string());
         self.generate_block(env, heap, &builder, module.block)?;
-        builder.push_instructions([
-            Instruction::Store(StackSlot::from(0)),
-            Instruction::Pop,
-            Instruction::Return,
-        ]);
+        builder.push_instructions([Instruction::Return]);
         Ok(Function::new(builder.build()))
     }
 
@@ -70,11 +67,8 @@ impl Generator {
             builder.push_instructions([Instruction::Nil]);
         }
         let scope = builder.pop_scope();
-        builder.push_instructions([Instruction::Store(StackSlot::from(scope.base))]);
-        // TODO: Handle closing of upvalues.
-        for _ in 0..scope.locals.len() {
-            builder.push_instructions([Instruction::Pop]);
-        }
+        builder.push_instructions([Instruction::Store(scope.base.into())]);
+        builder.push_instructions(self.close_scope(scope)?);
         Ok(())
     }
 
@@ -155,9 +149,9 @@ impl Generator {
             Expression::Access(access_expression) => {
                 self.generate_access_expression(env, heap, builder, access_expression)
             }
-            // Expression::If(if_expression) => {
-            //     self.generate_if_expression(env, builder, if_expression)
-            // }
+            Expression::If(if_expression) => {
+                self.generate_if_expression(env, heap, builder, if_expression)
+            }
             Expression::Fn(fn_expression) => {
                 self.generate_fn_expression(env, heap, builder, fn_expression)
             }
@@ -272,6 +266,45 @@ impl Generator {
         Ok(())
     }
 
+    fn generate_if_expression<'gc>(
+        &self,
+        env: &Environment<'gc>,
+        heap: &Heap<'gc>,
+        builder: &ChunkBuilderHandle,
+        if_expression: IfExpression,
+    ) -> Result<(), Error> {
+        let mut skip_else_jumps = Vec::new();
+
+        self.generate_expression(env, heap, builder, *if_expression.condition)?;
+        builder.push_instructions([Instruction::Test]);
+        let skip_if_jump = builder.instruction_offset();
+        builder.push_instructions([Instruction::Jump(0.into())]);
+        self.generate_block(env, heap, builder, if_expression.if_body)?;
+        skip_else_jumps.push(builder.instruction_offset());
+        builder.push_instructions([Instruction::Jump(0.into())]);
+        builder.set_jump_instruction_target(skip_if_jump);
+
+        for else_if in if_expression.else_ifs {
+            self.generate_expression(env, heap, builder, *else_if.condition)?;
+            builder.push_instructions([Instruction::Test]);
+            let skip_if_jump = builder.instruction_offset();
+            builder.push_instructions([Instruction::Jump(0.into())]);
+            self.generate_block(env, heap, builder, else_if.body)?;
+            skip_else_jumps.push(builder.instruction_offset());
+            builder.push_instructions([Instruction::Jump(0.into())]);
+            builder.set_jump_instruction_target(skip_if_jump);
+        }
+
+        if let Some(else_body) = if_expression.else_body {
+            self.generate_block(env, heap, builder, else_body)?;
+        }
+        for skip_else_jump in skip_else_jumps {
+            builder.set_jump_instruction_target(skip_else_jump);
+        }
+
+        Ok(())
+    }
+
     fn generate_fn_expression<'gc>(
         &self,
         env: &Environment<'gc>,
@@ -300,17 +333,18 @@ impl Generator {
             self.generate_pattern(env, heap, &function_builder, parameter)?;
         }
 
+        dbg!(&builder.0.borrow().frame);
+
         self.generate_expression(env, heap, &function_builder, *fn_expression.body)?;
+
+        dbg!(&function_builder.0.borrow().frame);
 
         // TODO: Handle closing of upvalues.
         function_builder.push_instructions([Instruction::Store(0.into())]);
-        let scope = function_builder.pop_scope();
-        for _ in 0..scope.locals.len() {
-            function_builder.push_instructions([Instruction::Pop]);
-        }
+        function_builder.push_instructions(self.close_scope(function_builder.pop_scope())?);
         function_builder.push_instructions([Instruction::Return]);
 
-        let function = Function::new(function_builder.build());
+        let function = Function::new(dbg!(function_builder.build()));
         let function_index = env.add_function(function);
         builder.push_instructions([Instruction::Closure(function_index)]);
         Ok(())
@@ -367,8 +401,8 @@ impl Generator {
         builder: &ChunkBuilderHandle,
         identifier: Identifier,
     ) -> Result<(), Error> {
-        if let Some(slot) = builder.local(&identifier.identifier) {
-            builder.push_instructions([Instruction::Load(slot)]);
+        if let Some(local) = builder.local(&identifier.identifier) {
+            builder.push_instructions([Instruction::Load(local.slot)]);
             Ok(())
         } else if let Some(index) = builder.resolve_upvalue(&identifier.identifier) {
             builder.push_instructions([Instruction::UpvalueLoad(index)]);
@@ -459,6 +493,21 @@ impl Generator {
         }
         Ok(())
     }
+
+    fn close_scope<'gc>(&self, scope: Scope) -> Result<Vec<Instruction>, Error> {
+        let mut instructions = vec![Instruction::Pop; scope.locals.len() - 1];
+        for (_, local) in scope.locals {
+            // We're not popping the 0th slot because that's the return value.
+            if local.slot == 0.into() {
+                continue;
+            }
+            if local.is_upvalue {
+                let index = instructions.len() - local.slot.into_usize();
+                instructions[index] = Instruction::UpvalueClose;
+            }
+        }
+        Ok(instructions)
+    }
 }
 
 struct ChunkBuilderHandle(Rc<RefCell<ChunkBuilder>>);
@@ -484,6 +533,10 @@ impl ChunkBuilderHandle {
         })))
     }
 
+    fn instruction_offset(&self) -> InstructionOffset {
+        self.0.borrow().instruction_offset()
+    }
+
     fn resolve_upvalue(&self, identifier: &str) -> Option<UpvalueIndex> {
         self.0.borrow_mut().resolve_upvalue(identifier)
     }
@@ -496,8 +549,12 @@ impl ChunkBuilderHandle {
         self.0.borrow_mut().add_fresh_local(prefix)
     }
 
-    fn local(&self, identifier: &str) -> Option<StackSlot> {
+    fn local(&self, identifier: &str) -> Option<Local> {
         self.0.borrow().local(identifier)
+    }
+
+    fn mark_local_as_upvalue(&self, identifier: &str) {
+        self.0.borrow_mut().mark_local_as_upvalue(identifier);
     }
 
     fn push_scope(&self) {
@@ -513,6 +570,10 @@ impl ChunkBuilderHandle {
         I: IntoIterator<Item = Instruction>,
     {
         self.0.borrow_mut().push_instructions(instructions);
+    }
+
+    fn set_jump_instruction_target(&self, jump_offset: InstructionOffset) {
+        self.0.borrow_mut().set_jump_instruction_target(jump_offset);
     }
 
     fn build(&self) -> Chunk {
@@ -543,8 +604,9 @@ impl ChunkBuilder {
     fn resolve_upvalue(&mut self, identifier: &str) -> Option<UpvalueIndex> {
         self.frame.upvalue(identifier).or_else(|| {
             self.parent.as_ref().cloned().and_then(|parent| {
-                if let Some(slot) = parent.local(identifier) {
-                    Some(self.add_upvalue(Upvalue::Local(slot)))
+                if let Some(local) = parent.local(identifier) {
+                    parent.mark_local_as_upvalue(identifier);
+                    Some(self.add_upvalue(Upvalue::Local(local.slot)))
                 } else if let Some(index) = parent.resolve_upvalue(identifier) {
                     Some(self.add_upvalue(Upvalue::Upvalue(index)))
                 } else {
@@ -562,8 +624,12 @@ impl ChunkBuilder {
         self.frame.add_fresh_local(prefix)
     }
 
-    fn local(&self, identifier: &str) -> Option<StackSlot> {
+    fn local(&self, identifier: &str) -> Option<Local> {
         self.frame.local(identifier)
+    }
+
+    fn mark_local_as_upvalue(&mut self, identifier: &str) {
+        self.frame.mark_local_as_upvalue(identifier);
     }
 
     fn add_upvalue(&mut self, upvalue: Upvalue) -> UpvalueIndex {
@@ -587,6 +653,14 @@ impl ChunkBuilder {
         self.instructions.extend(instructions);
     }
 
+    fn set_jump_instruction_target(&mut self, jump_offset: InstructionOffset) {
+        let offset = self.instruction_offset();
+        let instruction = self.instructions.get_mut(jump_offset.into_usize()).unwrap();
+        if let Instruction::Jump(ref mut target) = instruction {
+            *target = offset;
+        }
+    }
+
     fn build(&self) -> Chunk {
         Chunk {
             arity: self.arity,
@@ -596,6 +670,7 @@ impl ChunkBuilder {
     }
 }
 
+#[derive(Debug)]
 struct Frame {
     upvalues: HashMap<String, UpvalueIndex>,
     scopes: Vec<Scope>,
@@ -617,13 +692,21 @@ impl Frame {
         self.upvalues.insert(identifier, index);
     }
 
-    fn local(&self, identifier: &str) -> Option<StackSlot> {
+    fn local(&self, identifier: &str) -> Option<Local> {
         for scope in self.scopes.iter().rev() {
-            if let Some(slot) = scope.local(identifier) {
-                return Some(slot);
+            if let Some(local) = scope.local(identifier) {
+                return Some(local);
             }
         }
         None
+    }
+
+    fn mark_local_as_upvalue(&mut self, identifier: &str) {
+        for scope in self.scopes.iter_mut().rev() {
+            if scope.local(identifier).is_some() {
+                scope.mark_local_as_upvalue(identifier);
+            }
+        }
     }
 
     fn add_local(&mut self, identifier: String) -> StackSlot {
@@ -636,7 +719,7 @@ impl Frame {
 
     fn push_scope(&mut self) {
         self.scopes.push(Scope::new(
-            self.scopes.last().unwrap().base + self.scopes.len(),
+            self.scopes.last().unwrap().base + self.scopes.last().unwrap().locals.len(),
         ));
     }
 
@@ -646,9 +729,10 @@ impl Frame {
     }
 }
 
+#[derive(Debug)]
 struct Scope {
     base: usize,
-    locals: HashMap<String, StackSlot>,
+    locals: HashMap<String, Local>,
     fresh_counter: usize,
 }
 
@@ -661,17 +745,40 @@ impl Scope {
         }
     }
 
-    fn local(&self, identifer: &str) -> Option<StackSlot> {
-        self.locals.get(identifer).copied()
+    fn local(&self, identifer: &str) -> Option<Local> {
+        self.locals.get(identifer).cloned()
+    }
+
+    fn mark_local_as_upvalue(&mut self, identifier: &str) {
+        if let Some(local) = self.locals.get_mut(identifier) {
+            local.is_upvalue = true;
+        }
     }
 
     fn add_local(&mut self, identifer: String) -> StackSlot {
         let slot = StackSlot::from(self.base + self.locals.len());
-        self.locals.insert(identifer, slot);
+        self.locals.insert(identifer, Local::new(slot));
         slot
     }
 
     fn add_fresh_local(&mut self, prefix: String) -> StackSlot {
-        self.add_local(format!("__{}_{}", prefix, self.fresh_counter))
+        let slot = self.add_local(format!("__{}_{}", prefix, self.fresh_counter));
+        self.fresh_counter += 1;
+        slot
+    }
+}
+
+#[derive(Clone, Debug)]
+struct Local {
+    slot: StackSlot,
+    is_upvalue: bool,
+}
+
+impl Local {
+    fn new(slot: StackSlot) -> Local {
+        Local {
+            slot,
+            is_upvalue: false,
+        }
     }
 }

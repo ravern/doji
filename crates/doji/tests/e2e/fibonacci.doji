@@ -6,4 +6,4 @@ let fibonacci = fn (n) {
     }
 };
 
-assert fibonacci(6) == 8;
+fibonacci(6)

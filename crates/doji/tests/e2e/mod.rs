@@ -23,5 +23,6 @@ macro_rules! test_e2e {
 test_e2e!(int, "int", Value::int(42));
 test_e2e!(float, "float", Value::float(3.14159));
 test_e2e!(bool, "bool", Value::bool(true));
+test_e2e!(closure, "closure", Value::int(7));
 test_e2e!(add, "add", Value::float(89.4));
 test_e2e!(fibonacci, "fibonacci", Value::int(8));

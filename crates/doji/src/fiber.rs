@@ -172,7 +172,6 @@ impl<'gc> Fiber<'gc> {
             Instruction::Load(slot) => self.stack_push(self.stack_get(slot)?),
             Instruction::Store(slot) => {
                 let value = self.stack_pop()?;
-                self.stack_push(value.clone());
                 self.stack_set(slot, value)?
             }
             Instruction::Duplicate => {

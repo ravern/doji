@@ -5,8 +5,9 @@ Practical scripting language for Rust.
 ## Roadmap
 
 - [ ] Compilation
-  - [ ] Support closing of upvalues
-  - [ ] Support `if` expressions
+  - [x] Support closing of upvalues
+  - [x] Support `if` expressions
+  - [ ] Support recursive `fn` definitions
   - [ ] Support early returns
   - [ ] Refactor `Frame` and `Scope` structs
   - [ ] Add proper identifier pool (instead of `String` cloning)
