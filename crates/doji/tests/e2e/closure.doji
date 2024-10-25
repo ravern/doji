@@ -1,3 +1,3 @@
-let add = fn (x) fn (y, z) { x + y + z };
-let add_four = add(4);
-add_four(1, 2)
+let add = fn (x, y) fn (z) { y + x + z };
+let add_four = add(1, 3);
+add_four(3)

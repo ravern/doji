@@ -122,6 +122,8 @@ impl<'gc> Fiber<'gc> {
 
         let instruction = self.instruction()?;
         self.advance_code_offset();
+
+        dbg!(&instruction);
         match instruction {
             Instruction::Noop => {}
 
@@ -201,8 +203,14 @@ impl<'gc> Fiber<'gc> {
             }
 
             Instruction::Call(arity) => {
-                let value_slot = StackSlot::from(self.stack.size() - (arity.into_usize()) - 1);
-                let value = self.stack_get(value_slot)?;
+                let value_slot =
+                    AbsoluteStackSlot::from(self.stack.size() - (arity.into_usize()) - 1);
+                dbg!("boo");
+                let value = self
+                    .stack
+                    .get_absolute(value_slot)
+                    .ok_or(self.error(ErrorKind::AbsoluteStackSlot(value_slot.into())))?;
+                dbg!("booboo");
                 match value {
                     Value::Closure(closure) => {
                         if closure.arity() != arity {
@@ -285,6 +293,10 @@ impl<'gc> Fiber<'gc> {
 
             _ => todo!(),
         }
+        for upvalue in self.stack.upvalues.iter() {
+            upvalue.temp_debug();
+        }
+        dbg!(&self.stack.values);
 
         Ok(FiberStep::Step)
     }
@@ -454,8 +466,15 @@ impl<'gc> FiberStack<'gc> {
         }
     }
 
-    pub fn push_upvalue(&mut self, upvalue: UpvalueHandle<'gc>) {
-        self.upvalues.push(upvalue);
+    pub fn push_upvalue(&mut self, new_upvalue: UpvalueHandle<'gc>) {
+        let mut index = 0;
+        for upvalue in &self.upvalues {
+            if upvalue.slot().unwrap().into_usize() > new_upvalue.slot().unwrap().into_usize() {
+                break;
+            }
+            index += 1;
+        }
+        self.upvalues.insert(index, new_upvalue);
     }
 
     pub fn close_upvalue(&mut self, slot: StackSlot) -> Option<Value<'gc>> {

@@ -1,0 +1,10 @@
+let x = 5;
+let y = if x > 6 {
+    x
+} else if x < 3 {
+    32
+} else {
+    45
+};
+
+y

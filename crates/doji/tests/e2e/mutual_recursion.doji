@@ -1,0 +1,21 @@
+let {
+    is_even,
+    is_odd,
+} = {
+    is_even: fn (n) {
+        if n == 0 {
+            true
+        } else {
+            is_odd(n - 1)
+        }
+    },
+    is_odd: fn (n) {
+        if n == 1 {
+            true
+        } else {
+            is_even(n - 1)
+        }
+    },
+};
+
+is_even(2)

@@ -471,6 +471,10 @@ impl<'gc> UpvalueHandle<'gc> {
         let value = self.get_in(stack).unwrap();
         *self.0.root().borrow_mut() = Upvalue::Closed(value);
     }
+
+    pub fn temp_debug(&self) {
+        dbg!(self.0.root());
+    }
 }
 
 impl<'gc> Clone for UpvalueHandle<'gc> {

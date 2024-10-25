@@ -122,8 +122,16 @@ impl Generator {
         builder: &ChunkBuilderHandle,
         let_statement: LetStatement,
     ) -> Result<(), Error> {
+        self.build_let_scope(builder, *let_statement.pattern.clone());
         self.generate_expression(env, heap, builder, *let_statement.value)?;
-        self.generate_pattern(env, heap, builder, *let_statement.pattern)
+        let let_scope = builder.reset_let_scope();
+        self.generate_pattern(env, heap, builder, *let_statement.pattern)?;
+        for (identifier, local) in let_scope.locals {
+            if local.is_upvalue {
+                builder.mark_local_as_upvalue(&identifier);
+            }
+        }
+        Ok(())
     }
 
     fn generate_expression<'gc>(
@@ -312,6 +320,9 @@ impl Generator {
         builder: &ChunkBuilderHandle,
         fn_expression: FnExpression,
     ) -> Result<(), Error> {
+        dbg!(&builder.0.borrow().frame.let_scope);
+        builder.push_let_scope();
+
         let arity = fn_expression.parameters.len().into();
 
         let function_builder = ChunkBuilderHandle::with_parent(builder.clone(), arity);
@@ -333,11 +344,7 @@ impl Generator {
             self.generate_pattern(env, heap, &function_builder, parameter)?;
         }
 
-        dbg!(&builder.0.borrow().frame);
-
         self.generate_expression(env, heap, &function_builder, *fn_expression.body)?;
-
-        dbg!(&function_builder.0.borrow().frame);
 
         // TODO: Handle closing of upvalues.
         function_builder.push_instructions([Instruction::Store(0.into())]);
@@ -347,6 +354,9 @@ impl Generator {
         let function = Function::new(dbg!(function_builder.build()));
         let function_index = env.add_function(function);
         builder.push_instructions([Instruction::Closure(function_index)]);
+
+        builder.pop_let_scope();
+
         Ok(())
     }
 
@@ -457,11 +467,11 @@ impl Generator {
                 builder.push_instructions([Instruction::Pop]);
             }
             Pattern::List(list) => {
-                builder.add_fresh_local("list_pattern".to_string());
+                let slot = builder.add_fresh_local("list_pattern".to_string());
                 let mut index = 0;
                 for pattern in list.items {
                     builder.push_instructions([
-                        Instruction::Duplicate,
+                        Instruction::Load(slot),
                         Instruction::Int(index.into()),
                         Instruction::ObjectGet,
                     ]);
@@ -470,12 +480,12 @@ impl Generator {
                 }
             }
             Pattern::Map(map) => {
-                builder.add_fresh_local("map_pattern".to_string());
+                let slot = builder.add_fresh_local("map_pattern".to_string());
                 for pair in map.pairs {
                     let constant_index =
                         env.add_constant(Value::string_in(heap, pair.key.identifier.clone()));
                     builder.push_instructions([
-                        Instruction::Duplicate,
+                        Instruction::Load(slot),
                         Instruction::Constant(constant_index),
                         Instruction::ObjectGet,
                     ]);
@@ -494,15 +504,43 @@ impl Generator {
         Ok(())
     }
 
+    fn build_let_scope<'gc>(&self, builder: &ChunkBuilderHandle, pattern: Pattern) {
+        match pattern {
+            Pattern::Identifier(identifier) => {
+                builder.add_let_local(identifier.identifier.clone());
+            }
+            Pattern::Wildcard(_) => {
+                builder.push_instructions([Instruction::Pop]);
+            }
+            Pattern::List(list) => {
+                builder.add_fresh_let_local("list_pattern".to_string());
+                for pattern in list.items {
+                    self.build_let_scope(builder, pattern);
+                }
+            }
+            Pattern::Map(map) => {
+                builder.add_fresh_let_local("map_pattern".to_string());
+                for pair in map.pairs {
+                    let pattern = match pair.value {
+                        Some(pattern) => pattern,
+                        None => Pattern::Identifier(pair.key),
+                    };
+                    self.build_let_scope(builder, pattern);
+                }
+            }
+        }
+    }
+
     fn close_scope<'gc>(&self, scope: Scope) -> Result<Vec<Instruction>, Error> {
         let mut instructions = vec![Instruction::Pop; scope.locals.len() - 1];
+        dbg!(&scope);
         for (_, local) in scope.locals {
             // We're not popping the 0th slot because that's the return value.
             if local.slot == 0.into() {
                 continue;
             }
             if local.is_upvalue {
-                let index = instructions.len() - local.slot.into_usize();
+                let index = instructions.len() - (local.slot.into_usize() - scope.base);
                 instructions[index] = Instruction::UpvalueClose;
             }
         }
@@ -547,6 +585,26 @@ impl ChunkBuilderHandle {
 
     fn add_fresh_local(&self, prefix: String) -> StackSlot {
         self.0.borrow_mut().add_fresh_local(prefix)
+    }
+
+    fn add_let_local(&self, identifier: String) -> StackSlot {
+        self.0.borrow_mut().add_let_local(identifier)
+    }
+
+    fn add_fresh_let_local(&self, prefix: String) -> StackSlot {
+        self.0.borrow_mut().add_fresh_let_local(prefix)
+    }
+
+    fn reset_let_scope(&self) -> Scope {
+        self.0.borrow_mut().reset_let_scope()
+    }
+
+    fn push_let_scope(&self) {
+        self.0.borrow_mut().push_let_scope();
+    }
+
+    fn pop_let_scope(&self) {
+        self.0.borrow_mut().pop_let_scope();
     }
 
     fn local(&self, identifier: &str) -> Option<Local> {
@@ -624,6 +682,26 @@ impl ChunkBuilder {
         self.frame.add_fresh_local(prefix)
     }
 
+    fn add_let_local(&mut self, identifier: String) -> StackSlot {
+        self.frame.add_let_local(identifier)
+    }
+
+    fn add_fresh_let_local(&mut self, prefix: String) -> StackSlot {
+        self.frame.add_fresh_let_local(prefix)
+    }
+
+    fn reset_let_scope(&mut self) -> Scope {
+        self.frame.reset_let_scope()
+    }
+
+    fn push_let_scope(&mut self) {
+        self.frame.push_let_scope();
+    }
+
+    fn pop_let_scope(&mut self) {
+        self.frame.pop_let_scope();
+    }
+
     fn local(&self, identifier: &str) -> Option<Local> {
         self.frame.local(identifier)
     }
@@ -674,6 +752,8 @@ impl ChunkBuilder {
 struct Frame {
     upvalues: HashMap<String, UpvalueIndex>,
     scopes: Vec<Scope>,
+    let_scope: Option<Scope>,
+    is_let_scope_pushed: bool,
 }
 
 impl Frame {
@@ -681,6 +761,8 @@ impl Frame {
         Frame {
             upvalues: HashMap::new(),
             scopes: vec![Scope::new(0)],
+            let_scope: None,
+            is_let_scope_pushed: false,
         }
     }
 
@@ -715,6 +797,47 @@ impl Frame {
 
     fn add_fresh_local(&mut self, prefix: String) -> StackSlot {
         self.scopes.last_mut().unwrap().add_fresh_local(prefix)
+    }
+
+    fn add_let_local(&mut self, identifier: String) -> StackSlot {
+        if let Some(let_scope) = &mut self.let_scope {
+            let_scope.add_local(identifier)
+        } else {
+            self.let_scope = Some(Scope::new(
+                self.scopes.last().unwrap().base + self.scopes.last().unwrap().locals.len(),
+            ));
+            self.add_let_local(identifier)
+        }
+    }
+
+    fn add_fresh_let_local(&mut self, prefix: String) -> StackSlot {
+        if let Some(let_scope) = &mut self.let_scope {
+            let_scope.add_fresh_local(prefix)
+        } else {
+            self.let_scope = Some(Scope::new(
+                self.scopes.last().unwrap().base + self.scopes.last().unwrap().locals.len(),
+            ));
+            self.add_fresh_let_local(prefix)
+        }
+    }
+
+    fn reset_let_scope(&mut self) -> Scope {
+        self.let_scope.take().unwrap()
+    }
+
+    fn push_let_scope(&mut self) {
+        if let Some(let_scope) = self.let_scope.take() {
+            self.scopes.push(let_scope);
+            self.is_let_scope_pushed = true;
+        }
+    }
+
+    fn pop_let_scope(&mut self) {
+        if self.is_let_scope_pushed {
+            let scope = self.scopes.pop();
+            self.let_scope = Some(scope.unwrap());
+            self.is_let_scope_pushed = false;
+        }
     }
 
     fn push_scope(&mut self) {

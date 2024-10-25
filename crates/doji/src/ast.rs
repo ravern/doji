@@ -13,7 +13,6 @@ pub struct Block {
 #[derive(Debug, PartialEq)]
 pub enum Statement {
     Let(LetStatement),
-    Assign(AssignStatement),
     For(ForStatement),
     While(WhileStatement),
     Return(ReturnStatement),
@@ -24,13 +23,6 @@ pub enum Statement {
 
 #[derive(Debug, PartialEq)]
 pub struct LetStatement {
-    pub span: Span,
-    pub pattern: Box<Pattern>,
-    pub value: Box<Expression>,
-}
-
-#[derive(Debug, PartialEq)]
-pub struct AssignStatement {
     pub span: Span,
     pub pattern: Box<Pattern>,
     pub value: Box<Expression>,
