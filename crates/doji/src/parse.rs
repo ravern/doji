@@ -9,9 +9,10 @@ use pest_derive::Parser;
 use crate::ast::{
     AccessExpression, BinaryExpression, BinaryOperator, Block, BoolLiteral, CallExpression,
     Expression, FloatLiteral, FnExpression, ForStatement, Identifier, IfElseIf, IfExpression,
-    IntLiteral, LetStatement, ListExpression, ListPattern, Literal, MapExpression,
-    MapExpressionKey, MapExpressionPair, MapPattern, MapPatternPair, MemberExpression, Module,
-    Pattern, ReturnStatement, Span, Statement, UnaryExpression, UnaryOperator, WhileStatement,
+    IfExpressionSemi, IntLiteral, LetStatement, ListExpression, ListPattern, Literal,
+    MapExpression, MapExpressionKey, MapExpressionPair, MapPattern, MapPatternPair,
+    MemberExpression, Module, Pattern, ReturnStatement, Span, Statement, UnaryExpression,
+    UnaryOperator, WhileStatement,
 };
 
 #[derive(Debug)]
@@ -81,10 +82,27 @@ impl Parser {
     fn parse_block<'i>(&self, pair: PestPair<'i>) -> Result<Block, ParseError> {
         let span = pair.as_span().into();
         let mut pairs = pair.into_inner();
+        let mut statements: Vec<Statement> = take_while!(self, pairs, statement, parse_statement)?;
+        let mut return_expression =
+            take_if!(self, pairs, expression, parse_expression)?.map(Box::new);
+        if return_expression.is_none() {
+            if let Some(statement) = statements.last() {
+                if let Statement::IfExpressionSemi(if_expression_semi) = statement {
+                    if !if_expression_semi.has_semi {
+                        let if_expression_semi = match statements.pop().unwrap() {
+                            Statement::IfExpressionSemi(if_expression_semi) => if_expression_semi,
+                            _ => unreachable!(),
+                        };
+                        return_expression =
+                            Some(Box::new(Expression::If(if_expression_semi.expression)));
+                    }
+                }
+            }
+        }
         Ok(Block {
             span,
-            statements: take_while!(self, pairs, statement, parse_statement)?,
-            return_expression: take_if!(self, pairs, expression, parse_expression)?.map(Box::new),
+            statements: statements.into(),
+            return_expression,
         })
     }
 
@@ -97,6 +115,7 @@ impl Parser {
             Rule::return_statement => self.parse_return_statement(pair),
             Rule::break_statement => Ok(Statement::Break(pair.as_span().into())),
             Rule::continue_statement => Ok(Statement::Continue(pair.as_span().into())),
+            Rule::if_expression_semi => self.parse_if_expression_semi(pair),
             Rule::expression => self.parse_expression(pair).map(Statement::Expression),
             _ => unreachable!(),
         }
@@ -139,6 +158,19 @@ impl Parser {
         Ok(Statement::Return(ReturnStatement {
             span,
             value: take_if!(self, pairs, expression, parse_expression)?.map(Box::new),
+        }))
+    }
+
+    fn parse_if_expression_semi<'i>(&self, pair: PestPair<'i>) -> Result<Statement, ParseError> {
+        let span = pair.as_span().into();
+        let mut pairs = pair.into_inner().peekable();
+        Ok(Statement::IfExpressionSemi(IfExpressionSemi {
+            span,
+            expression: match take!(self, pairs, if_expression, parse_if_expression)? {
+                Expression::If(if_expression) => if_expression,
+                _ => unreachable!(),
+            },
+            has_semi: pairs.next().is_some(),
         }))
     }
 

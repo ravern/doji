@@ -1,0 +1,8 @@
+let foo = fn (x, y) {
+    if x > 5 {
+        return y;
+    }
+    x + y
+};
+
+foo(7, 9) - foo(2, 3)

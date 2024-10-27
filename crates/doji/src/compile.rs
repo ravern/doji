@@ -5,7 +5,7 @@ use crate::{
         AccessExpression, BinaryExpression, BinaryOperator, Block, CallExpression, Expression,
         FnExpression, Identifier, IfExpression, LetStatement, ListExpression, Literal,
         MapExpression, MapExpressionKey, MapExpressionPair, MemberExpression, Module, Pattern,
-        Statement, UnaryExpression, UnaryOperator,
+        ReturnStatement, Statement, UnaryExpression, UnaryOperator,
     },
     bytecode::{
         Arity, Chunk, Instruction, InstructionOffset, IntImmediate, StackSlot, Upvalue,
@@ -27,7 +27,7 @@ impl Compiler {
         heap: &Heap<'gc>,
         source: &str,
     ) -> Result<Function, Error> {
-        let module = Parser {}.parse(source).unwrap();
+        let module = dbg!(Parser {}.parse(source).unwrap());
         dbg!(Generator {}.generate_module(env, heap, module))
     }
 }
@@ -44,7 +44,7 @@ impl Generator {
         let builder = ChunkBuilderHandle::new(0.into());
         builder.add_fresh_local("module".to_string());
         self.generate_block(env, heap, &builder, module.block)?;
-        builder.push_instructions([Instruction::Return]);
+        builder.push_instructions([Instruction::Store(0.into()), Instruction::Return]);
         Ok(Function::new(builder.build()))
     }
 
@@ -89,9 +89,9 @@ impl Generator {
             // Statement::While(while_statement) => {
             //     self.generate_while_statement(env, builder, while_statement)
             // }
-            // Statement::Return(return_statement) => {
-            //     self.generate_return_statement(env, builder, return_statement)
-            // }
+            Statement::Return(return_statement) => {
+                self.generate_return_statement(env, heap, builder, return_statement)
+            }
             // Statement::Break(span) => {
             //     builder
             //         .0
@@ -106,6 +106,16 @@ impl Generator {
             //         .push_code([Instruction::Jump(CodeOffset::from(0))]);
             //     Ok(())
             // }
+            Statement::IfExpressionSemi(if_expression_semi) => {
+                self.generate_expression(
+                    env,
+                    heap,
+                    builder,
+                    Expression::If(if_expression_semi.expression),
+                )?;
+                builder.push_instructions([Instruction::Pop]);
+                Ok(())
+            }
             Statement::Expression(expression) => {
                 self.generate_expression(env, heap, builder, expression)?;
                 builder.push_instructions([Instruction::Pop]);
@@ -131,6 +141,28 @@ impl Generator {
                 builder.mark_local_as_upvalue(&identifier);
             }
         }
+        Ok(())
+    }
+
+    fn generate_return_statement<'gc>(
+        &self,
+        env: &Environment<'gc>,
+        heap: &Heap<'gc>,
+        builder: &ChunkBuilderHandle,
+        return_statement: ReturnStatement,
+    ) -> Result<(), Error> {
+        if let Some(value) = return_statement.value {
+            self.generate_expression(env, heap, builder, *value)?;
+        } else {
+            builder.push_instructions([Instruction::Nil]);
+        }
+        let scopes = builder.0.borrow().frame.scopes.clone();
+        for scope in scopes.into_iter().rev() {
+            dbg!(&scope);
+            builder.push_instructions([Instruction::Store(scope.base.into())]);
+            builder.push_instructions(self.close_scope(scope)?);
+        }
+        builder.push_instructions([Instruction::Return]);
         Ok(())
     }
 
@@ -305,6 +337,8 @@ impl Generator {
 
         if let Some(else_body) = if_expression.else_body {
             self.generate_block(env, heap, builder, else_body)?;
+        } else {
+            builder.push_instructions([Instruction::Nil]);
         }
         for skip_else_jump in skip_else_jumps {
             builder.set_jump_instruction_target(skip_else_jump);
@@ -852,7 +886,7 @@ impl Frame {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 struct Scope {
     base: usize,
     locals: HashMap<String, Local>,

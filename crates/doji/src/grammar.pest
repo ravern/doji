@@ -3,7 +3,7 @@ COMMENT    = _{ "//" ~ ( !NEWLINE ~ ANY )* ~ NEWLINE }
 
 module = { SOI ~ statement* ~ expression? ~ EOI }
 
-statement = { let_statement | for_statement | while_statement | return_statement | break_statement | continue_statement | expression ~ ";" }
+statement = { let_statement | for_statement | while_statement | return_statement | break_statement | continue_statement | if_expression_semi | expression ~ ";" }
 
 let_statement      = { "let" ~ pattern ~ "=" ~ expression ~ ";" }
 for_statement      = { "for" ~ pattern ~ "in" ~ expression ~ block }
@@ -11,6 +11,8 @@ while_statement    = { "while" ~ expression ~ block }
 return_statement   = { "return" ~ expression? ~ ";" }
 break_statement    = { "break" ~ ";" }
 continue_statement = { "continue" ~ ";" }
+
+if_expression_semi = { if_expression ~ semi? }
 
 block = { "{" ~ statement* ~ expression? ~ "}" }
 
@@ -54,6 +56,8 @@ int   = @{ ASCII_DIGIT+ }
 float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
 
 wildcard = { "_" }
+
+semi = { ";" }
 
 neg     = { "-" }
 not     = { "!" }

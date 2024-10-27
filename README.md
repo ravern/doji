@@ -7,10 +7,13 @@ Practical scripting language for Rust.
 - [ ] Compilation
   - [x] Support closing of upvalues
   - [x] Support `if` expressions
-  - [ ] Support recursive `fn` definitions
-  - [ ] Support early returns
+  - [x] Support recursive `fn` definitions
+  - [x] Support early returns
   - [ ] Refactor `Frame` and `Scope` structs
   - [ ] Add proper identifier pool (instead of `String` cloning)
+- [ ] Runtime
+  - [ ] Support multiple fibers
+  - [ ] Support multiple files and `import`ing them
 - [ ] Debugging
   - [ ] Add displaying of chunks (with chunk names, identifiers from context)
 - [ ] Testing

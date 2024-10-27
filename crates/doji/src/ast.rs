@@ -18,6 +18,7 @@ pub enum Statement {
     Return(ReturnStatement),
     Break(Span),
     Continue(Span),
+    IfExpressionSemi(IfExpressionSemi),
     Expression(Expression),
 }
 
@@ -26,6 +27,13 @@ pub struct LetStatement {
     pub span: Span,
     pub pattern: Box<Pattern>,
     pub value: Box<Expression>,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct IfExpressionSemi {
+    pub span: Span,
+    pub expression: IfExpression,
+    pub has_semi: bool,
 }
 
 #[derive(Debug, PartialEq)]
