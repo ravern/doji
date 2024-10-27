@@ -11,8 +11,8 @@ use crate::ast::{
     Expression, FloatLiteral, FnExpression, ForStatement, Identifier, IfElseIf, IfExpression,
     IfExpressionSemi, IntLiteral, LetStatement, ListExpression, ListPattern, Literal,
     MapExpression, MapExpressionKey, MapExpressionPair, MapPattern, MapPatternPair,
-    MemberExpression, Module, Pattern, ReturnStatement, Span, Statement, UnaryExpression,
-    UnaryOperator, WhileStatement,
+    MemberExpression, Module, Pattern, ReturnStatement, Span, Statement, StringLiteral,
+    UnaryExpression, UnaryOperator, WhileStatement,
 };
 
 #[derive(Debug)]
@@ -450,9 +450,24 @@ impl Parser {
                 span,
                 value: pair.as_str().parse().unwrap(),
             }),
+            Rule::string => Literal::String(self.parse_string(pair)?),
             _ => unreachable!(),
         };
         Ok(literal)
+    }
+
+    fn parse_string<'i>(&self, pair: PestPair<'i>) -> Result<StringLiteral, ParseError> {
+        let span = pair.as_span().into();
+        let pair = pair.into_inner().next().unwrap();
+        let value = pair
+            .as_str()
+            .to_string()
+            .replace("\\n", "\n")
+            .replace("\\t", "\t")
+            .replace("\\r", "\r")
+            .replace("\\\\", "\\")
+            .replace("\\\"", "\"");
+        Ok(StringLiteral { span, value })
     }
 }
 
@@ -495,7 +510,7 @@ mod tests {
     use crate::ast::{
         BinaryExpression, BinaryOperator, Block, Expression, FnExpression, Identifier, IntLiteral,
         LetStatement, Literal, MapExpression, MapExpressionKey, MapExpressionPair, Module, Pattern,
-        Span, Statement,
+        Span, Statement, StringLiteral,
     };
 
     use super::Parser;
@@ -641,6 +656,29 @@ mod tests {
                     ]
                     .into(),
                     return_expression: None,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn parse_string() {
+        let source = "\"this is the first line\\n\\tthis is the second, indented line\"";
+        let parser = Parser {};
+        let module = parser.parse(source).unwrap();
+        assert_eq!(
+            module,
+            Module {
+                block: Block {
+                    span: Span { start: 0, end: 61 },
+                    statements: [].into(),
+                    return_expression: Some(Box::new(Expression::Literal(Literal::String(
+                        StringLiteral {
+                            span: Span { start: 0, end: 61 },
+                            value: "this is the first line\n\tthis is the second, indented line"
+                                .to_string(),
+                        }
+                    ))),),
                 },
             }
         );

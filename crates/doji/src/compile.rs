@@ -464,6 +464,10 @@ impl Generator {
         literal: Literal,
     ) -> Result<(), Error> {
         match literal {
+            Literal::Nil(_) => {
+                builder.push_instructions([Instruction::Nil]);
+                Ok(())
+            }
             Literal::Bool(bool_literal) => {
                 let bool_instruction = if bool_literal.value {
                     Instruction::True
@@ -482,7 +486,11 @@ impl Generator {
                 builder.push_instructions([Instruction::Constant(constant)]);
                 Ok(())
             }
-            _ => unimplemented!(),
+            Literal::String(string_literal) => {
+                let constant = env.add_constant(Value::string_in(heap, string_literal.value));
+                builder.push_instructions([Instruction::Constant(constant)]);
+                Ok(())
+            }
         }
     }
 

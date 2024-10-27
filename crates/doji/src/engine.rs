@@ -34,4 +34,8 @@ impl<'gc> Engine<'gc> {
         let fiber = FiberValue::new_in(&self.heap, function);
         fiber.run(&self.env, &self.heap).await
     }
+
+    pub fn heap(&self) -> &Heap<'gc> {
+        &self.heap
+    }
 }

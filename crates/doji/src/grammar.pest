@@ -48,12 +48,16 @@ group = { "(" ~ expression ~ ")" }
 
 identifier = @{ ( ASCII_ALPHA | "_" ) ~ ( ASCII_ALPHANUMERIC | "_" )* }
 
-literal = { nil | float | int | bool }
+literal = { nil | float | int | bool | string }
 
-nil   =  { "nil" }
-bool  =  { "true" | "false" }
-int   = @{ ASCII_DIGIT+ }
-float = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+nil    =  { "nil" }
+bool   =  { "true" | "false" }
+int    = @{ ASCII_DIGIT+ }
+float  = @{ ASCII_DIGIT+ ~ "." ~ ASCII_DIGIT+ }
+
+string       = ${ "\"" ~ string_inner ~ "\"" }
+string_inner = @{ string_char* }
+string_char  =  { !("\"" | "\\") ~ ANY | "\\" ~ ( "\"" | "\\" | "n" | "r" | "t" ) }
 
 wildcard = { "_" }
 

@@ -255,6 +255,7 @@ pub enum Literal {
     Bool(BoolLiteral),
     Int(IntLiteral),
     Float(FloatLiteral),
+    String(StringLiteral),
 }
 
 impl Literal {
@@ -264,6 +265,7 @@ impl Literal {
             Literal::Bool(literal) => literal.span.clone(),
             Literal::Int(literal) => literal.span.clone(),
             Literal::Float(literal) => literal.span.clone(),
+            Literal::String(literal) => literal.span.clone(),
         }
     }
 }
@@ -284,6 +286,12 @@ pub struct IntLiteral {
 pub struct FloatLiteral {
     pub span: Span,
     pub value: f64,
+}
+
+#[derive(Debug, PartialEq)]
+pub struct StringLiteral {
+    pub span: Span,
+    pub value: String,
 }
 
 #[derive(Clone, Debug, PartialEq)]
