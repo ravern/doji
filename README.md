@@ -9,19 +9,23 @@ Practical scripting language for Rust.
   - [x] Support `if` expressions
   - [x] Support recursive `fn` definitions
   - [x] Support early returns
-  - [ ] Refactor `Frame` and `Scope` structs
+  - [ ] Support loops, `break` and `continue`
   - [ ] Add proper identifier pool (instead of `String` cloning)
 - [ ] Runtime
-  - [ ] Support multiple fibers
-  - [ ] Support multiple files and `import`ing them
+  - [ ] Support `import` of modules
+  - [ ] Support `spawn`ing of `Fiber`s
 - [ ] Debugging
   - [ ] Add displaying of chunks (with chunk names, identifiers from context)
 - [ ] Testing
   - [x] Add structured e2e test harness
   - [ ] Add e2e test for each language feature
-    - [ ] Literals
-    - [ ] Functions
+    - [x] Literals
+    - [x] Closures
     - [ ] Fibers
+    - [ ] Channels
+- [ ] Refactoring
+  - [ ] Parsing of `if_expression` within `statement` rule (Remove `ast::IfExpressionSemi`)
+  - [ ] `Frame` and `Scope` structs
 
 ## Guide
 
