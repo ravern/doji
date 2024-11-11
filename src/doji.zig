@@ -1,5 +1,2 @@
-const std = @import("std");
-
-pub fn greet() void {
-    std.debug.print("Hello, world!\n", .{});
-}
+pub const Source = @import("Source.zig");
+pub const VM = @import("VM.zig");

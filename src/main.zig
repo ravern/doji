@@ -1,10 +1,13 @@
 const std = @import("std");
-const doji = @import("./doji.zig");
+const doji = @import("doji.zig");
 
 pub fn main() !void {
     var gpa = std.heap.GeneralPurposeAllocator(.{}){};
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
+
+    var vm = try doji.VM.init(allocator);
+    defer vm.deinit();
 
     const in = std.io.getStdIn().reader();
     const out = std.io.getStdOut().writer();
@@ -23,6 +26,8 @@ pub fn main() !void {
         };
         defer allocator.free(line);
 
-        try out.print("{s}\n", .{line});
+        const source = doji.Source.initStdin(line);
+        const result = vm.eval(source) catch continue;
+        std.debug.print("{}\n", .{result});
     }
 }
