@@ -18,12 +18,6 @@ pub fn compile(allocator: Allocator, env: *Environment, source: []const u8) !Chu
     return codegen.generate(allocator, env, &file);
 }
 
-test "lex" {
-    testing.refAllDecls(lex);
-}
-test "parse" {
-    testing.refAllDecls(parse);
-}
-test "codegen" {
-    testing.refAllDecls(codegen);
+test {
+    testing.refAllDecls(@This());
 }

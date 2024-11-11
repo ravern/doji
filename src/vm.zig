@@ -86,8 +86,8 @@ fn testVm(allocator: Allocator, source: []const u8) !Value {
     return vm.execute(source);
 }
 
-test "value" {
-    testing.refAllDecls(value);
+test {
+    testing.refAllDecls(@This());
 }
 
 test "nil" {
@@ -108,7 +108,7 @@ test "int" {
     try testing.expectEqual(123, result.asInt());
 }
 
-test "int.large" {
+test "large int" {
     const allocator = std.testing.allocator;
     const result = try testVm(allocator, "123456");
     try testing.expectEqual(123456, result.asInt());

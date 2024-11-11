@@ -212,12 +212,14 @@ pub fn ValueHashMapUnmanaged(comptime V: type) type {
 }
 
 const ValueKeyContext = struct {
-    pub fn hash(self: ValueKeyContext, key: Value) u64 {
+    const Self = @This();
+
+    pub fn hash(self: Self, key: Value) u64 {
         _ = self;
         return key.hash();
     }
 
-    pub fn eql(self: ValueKeyContext, left_key: Value, right_key: Value) bool {
+    pub fn eql(self: Self, left_key: Value, right_key: Value) bool {
         _ = self;
         return left_key.eql(right_key);
     }
