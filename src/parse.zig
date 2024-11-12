@@ -34,7 +34,13 @@ pub const Parser = struct {
             .int => .{
                 .int = .{
                     .span = token.span,
-                    .int = std.fmt.parseInt(i64, self.source.contentSlice(token.span), 0) catch unreachable,
+                    .int = std.fmt.parseInt(i48, self.source.contentSlice(token.span), 0) catch unreachable,
+                },
+            },
+            .float => .{
+                .float = .{
+                    .span = token.span,
+                    .float = std.fmt.parseFloat(f64, self.source.contentSlice(token.span)) catch unreachable,
                 },
             },
             .eof => unreachable,

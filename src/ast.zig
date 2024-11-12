@@ -6,6 +6,7 @@ pub const Token = struct {
 
     pub const Kind = enum {
         int,
+        float,
         eof,
     };
 
@@ -29,7 +30,7 @@ pub const Expression = union(enum) {
     const Self = @This();
 
     int: IntExpression,
-
+    float: FloatExpression,
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         _ = allocator;
         switch (self) {
@@ -40,6 +41,11 @@ pub const Expression = union(enum) {
 };
 
 pub const IntExpression = struct {
-    int: i64,
+    int: i48,
+    span: Span,
+};
+
+pub const FloatExpression = struct {
+    float: f64,
     span: Span,
 };

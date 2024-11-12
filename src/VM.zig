@@ -34,5 +34,6 @@ pub fn eval(self: *Self, source: Source) !Value {
     const inst = chunk.code.items[0];
     return switch (inst.op) {
         .int => Value.initInt(@intCast(inst.arg)),
+        .constant => chunk.constants.items[inst.arg],
     };
 }

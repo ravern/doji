@@ -34,12 +34,18 @@ pub const Scanner = struct {
 
     fn nextNumber(self: *Self) !ast.Token {
         self.advance();
+        var is_float = false;
         while (true) {
             const c = self.peek() orelse break;
+            if (c == '.' and !is_float) {
+                is_float = true;
+                self.advance();
+                continue;
+            }
             if (!std.ascii.isDigit(c)) break;
             self.advance();
         }
-        return self.buildToken(.int);
+        return self.buildToken(if (is_float) .float else .int);
     }
 
     fn buildToken(self: *Self, kind: ast.Token.Kind) ast.Token {

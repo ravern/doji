@@ -6,6 +6,7 @@ pub const Instruction = packed struct {
 
     pub const Op = enum(u8) {
         int,
+        constant,
     };
     pub const Arg = u24;
 
