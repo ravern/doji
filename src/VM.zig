@@ -28,12 +28,17 @@ pub fn eval(self: *Self, source: Source) !Value {
     var root = try parser.parse(self.allocator);
     defer root.deinit(self.allocator);
 
-    var chunk = try codegen.generate(self.allocator, root);
+    var generator = codegen.Generator.init(self.allocator, &self.reporter, source);
+    var chunk = try generator.generate(root);
     defer chunk.deinit(self.allocator);
 
     const inst = chunk.code.items[0];
     return switch (inst.op) {
+        .nil => Value.nil,
+        .true => Value.initBool(true),
+        .false => Value.initBool(false),
         .int => Value.initInt(@intCast(inst.arg)),
         .constant => chunk.constants.items[inst.arg],
+        else => unreachable,
     };
 }

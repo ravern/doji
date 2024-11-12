@@ -21,6 +21,6 @@ pub fn merge(self: Self, other: Self) Self {
     return Self{ .start_loc = start_loc, .end_loc = end_loc };
 }
 
-pub fn len(self: Self) usize {
+pub fn getLength(self: Self) usize {
     return self.end_loc.offset - self.start_loc.offset;
 }

@@ -21,16 +21,18 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self, allocator: std.mem.Allocator) !ast.Root {
-        const root = try allocator.create(ast.Expression);
-        errdefer allocator.destroy(root);
-        root.* = try self.parseExpression(allocator);
-        return ast.Root{ .root = root };
+        const expr = try allocator.create(ast.Expression);
+        errdefer allocator.destroy(expr);
+        expr.* = try self.parseExpression(allocator);
+        return ast.Root{ .expr = expr };
     }
 
     fn parseExpression(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
-        _ = allocator;
         const token = try self.scanner.next();
         return switch (token.kind) {
+            .nil => .{ .nil = token.span },
+            .true => .{ .true = token.span },
+            .false => .{ .false = token.span },
             .int => .{
                 .int = .{
                     .span = token.span,
@@ -41,6 +43,12 @@ pub const Parser = struct {
                 .float = .{
                     .span = token.span,
                     .float = std.fmt.parseFloat(f64, self.source.contentSlice(token.span)) catch unreachable,
+                },
+            },
+            .identifier => .{
+                .identifier = .{
+                    .identifier = try allocator.dupe(u8, self.source.contentSlice(token.span)),
+                    .span = token.span,
                 },
             },
             .eof => unreachable,

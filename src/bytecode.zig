@@ -5,8 +5,13 @@ pub const Instruction = packed struct {
     const Self = @This();
 
     pub const Op = enum(u8) {
+        nil,
+        true,
+        false,
         int,
         constant,
+        local,
+        store_local,
     };
     pub const Arg = u24;
 
