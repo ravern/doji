@@ -12,6 +12,7 @@ pub const Instruction = packed struct {
         constant,
         local,
         store_local,
+        ret,
     };
     pub const Arg = u24;
 
