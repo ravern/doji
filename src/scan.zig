@@ -7,14 +7,57 @@ const Reporter = @import("Reporter.zig");
 pub const Scanner = struct {
     const Self = @This();
 
-    reporter: *Reporter,
-    source: Source,
-    cur_span: Span,
+    const punctuation = std.StaticStringMap(ast.Token.Kind).initComptime(.{
+        .{ "+", .plus },
+        .{ "-", .minus },
+        .{ "*", .asterisk },
+        .{ "/", .slash },
+        .{ "%", .percent },
+        .{ "=", .equal },
+        .{ "!", .bang },
+        .{ "<", .less },
+        .{ ">", .greater },
+        .{ "&", .ampersand },
+        .{ "|", .pipe },
+        .{ "^", .caret },
+        .{ "~", .tilde },
+        .{ ".", .period },
+        .{ ",", .comma },
+        .{ ":", .colon },
+        .{ ";", .semicolon },
+        .{ "{", .l_brace },
+        .{ "}", .r_brace },
+        .{ "(", .l_paren },
+        .{ ")", .r_paren },
+        .{ "[", .l_bracket },
+        .{ "]", .r_bracket },
+    });
+
+    const punctuation2 = std.StaticStringMap(ast.Token.Kind).initComptime(.{
+        .{ "+=", .plus_equal },
+        .{ "-=", .minus_equal },
+        .{ "*=", .asterisk_equal },
+        .{ "/=", .slash_equal },
+        .{ "%=", .percent_equal },
+        .{ "==", .equal_equal },
+        .{ "!=", .bang_equal },
+        .{ "<=", .less_equal },
+        .{ ">=", .greater_equal },
+        .{ "&&", .ampersand_ampersand },
+        .{ "||", .pipe_pipe },
+        .{ "<<", .less_less },
+        .{ ">>", .greater_greater },
+    });
 
     const keywords = std.StaticStringMap(ast.Token.Kind).initComptime(.{
+        .{ "nil", .nil },
         .{ "true", .true },
         .{ "false", .false },
     });
+
+    reporter: *Reporter,
+    source: Source,
+    cur_span: Span,
 
     pub fn init(reporter: *Reporter, source: Source) Self {
         return Self{
@@ -30,7 +73,15 @@ pub const Scanner = struct {
             .kind = .eof,
             .span = self.cur_span,
         };
-        if (std.ascii.isDigit(c)) {
+        if (punctuation.get(&.{c})) |kind| {
+            self.advance();
+            const c2 = self.peek() orelse return self.buildToken(kind);
+            if (punctuation2.get(&.{ c, c2 })) |kind2| {
+                self.advance();
+                return self.buildToken(kind2);
+            }
+            return self.buildToken(kind);
+        } else if (std.ascii.isDigit(c)) {
             return self.nextNumber();
         } else if (std.ascii.isAlphabetic(c)) {
             return self.nextIdentifier();

@@ -1,5 +1,6 @@
 const std = @import("std");
 const Value = @import("Value.zig");
+const ast = @import("ast.zig");
 
 pub const Instruction = packed struct {
     const Self = @This();
@@ -10,10 +11,58 @@ pub const Instruction = packed struct {
         false,
         int,
         constant,
+
         local,
         store_local,
+
+        add,
+        sub,
+        mul,
+        div,
+        mod,
+        neg,
+        eq,
+        ne,
+        lt,
+        le,
+        gt,
+        ge,
+        log_and,
+        log_or,
+        log_not,
+        bit_and,
+        bit_or,
+        bit_xor,
+        bit_not,
+        shift_left,
+        shift_right,
+
         ret,
+
+        pub fn fromBinaryOp(op: ast.BinaryExpression.Op) Self.Op {
+            return switch (op) {
+                .add => .add,
+                .sub => .sub,
+                .mul => .mul,
+                .div => .div,
+                .mod => .mod,
+                .eq => .eq,
+                .ne => .ne,
+                .lt => .lt,
+                .le => .le,
+                .gt => .gt,
+                .ge => .ge,
+                .log_and => .log_and,
+                .log_or => .log_or,
+                .bit_and => .bit_and,
+                .bit_or => .bit_or,
+                .bit_xor => .bit_xor,
+                .shift_left => .shift_left,
+                .shift_right => .shift_right,
+            };
+        }
     };
+
     pub const Arg = u24;
 
     op: Op,

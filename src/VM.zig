@@ -11,6 +11,19 @@ const Fiber = @import("Fiber.zig");
 
 const Self = @This();
 
+const binary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value, Value) ?Value).init(.{
+    .add = Value.add,
+    .sub = Value.sub,
+    .mul = Value.mul,
+    .div = Value.div,
+    .mod = Value.mod,
+    .bit_and = Value.bitAnd,
+    .bit_or = Value.bitOr,
+    .bit_xor = Value.bitXor,
+    .shift_left = Value.shiftLeft,
+    .shift_right = Value.shiftRight,
+});
+
 allocator: std.mem.Allocator,
 reporter: Reporter,
 
@@ -35,6 +48,8 @@ pub fn eval(self: *Self, source: Source) !Value {
     defer chunk.deinit(self.allocator);
 
     var fiber = Fiber.init(self.allocator);
+    defer fiber.deinit();
+
     var ip: usize = 0;
 
     while (true) {
@@ -52,8 +67,19 @@ pub fn eval(self: *Self, source: Source) !Value {
             .false => try fiber.push(Value.initBool(false)),
             .int => try fiber.push(Value.initInt(@intCast(inst.arg))),
             .constant => try fiber.push(chunk.constants.items[inst.arg]),
+
             .local => try fiber.push(fiber.getLocal(inst.arg)),
+
+            .add, .sub, .mul, .div, .mod, .bit_and, .bit_or, .bit_xor, .shift_left, .shift_right => {
+                // FIXME: bunch of uncaught errors here
+                const right = fiber.pop() orelse unreachable;
+                const left = fiber.pop() orelse unreachable;
+                try fiber.push(binary_ops.get(inst.op).?(left, right).?);
+            },
+
             .ret => return fiber.pop() orelse unreachable, // FIXME: catch and report
+
+            else => unreachable,
         }
     }
 }

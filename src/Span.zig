@@ -10,10 +10,10 @@ pub const Location = struct {
     pub const zero = Location{ .offset = 0, .line = 1, .col = 1 };
 };
 
+pub const zero = Self{ .start_loc = Location.zero, .end_loc = Location.zero };
+
 start_loc: Location,
 end_loc: Location,
-
-pub const zero = Self{ .start_loc = Location.zero, .end_loc = Location.zero };
 
 pub fn merge(self: Self, other: Self) Self {
     const start_loc = if (self.start_loc.offset < other.start_loc.offset) self.start_loc else other.start_loc;

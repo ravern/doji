@@ -53,6 +53,11 @@ pub const Generator = struct {
                     return error.CompileFailed;
                 }
             },
+            .binary => |binary| {
+                try self.generateExpression(frame, binary.left);
+                try self.generateExpression(frame, binary.right);
+                _ = try frame.chunk.appendInst(self.allocator, bytecode.Instruction.Op.fromBinaryOp(binary.op));
+            },
         }
     }
 };
