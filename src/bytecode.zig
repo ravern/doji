@@ -20,9 +20,10 @@ pub const Instruction = packed struct {
         mul,
         div,
         mod,
+        pos,
         neg,
         eq,
-        ne,
+        neq,
         lt,
         le,
         gt,
@@ -34,10 +35,18 @@ pub const Instruction = packed struct {
         bit_or,
         bit_xor,
         bit_not,
-        shift_left,
-        shift_right,
+        shl,
+        shr,
 
         ret,
+
+        pub fn fromUnaryOp(op: ast.UnaryExpression.Op) Self.Op {
+            return switch (op) {
+                .pos => .pos,
+                .neg => .neg,
+                .log_not => .log_not,
+            };
+        }
 
         pub fn fromBinaryOp(op: ast.BinaryExpression.Op) Self.Op {
             return switch (op) {
@@ -47,7 +56,7 @@ pub const Instruction = packed struct {
                 .div => .div,
                 .mod => .mod,
                 .eq => .eq,
-                .ne => .ne,
+                .neq => .neq,
                 .lt => .lt,
                 .le => .le,
                 .gt => .gt,
@@ -57,8 +66,8 @@ pub const Instruction = packed struct {
                 .bit_and => .bit_and,
                 .bit_or => .bit_or,
                 .bit_xor => .bit_xor,
-                .shift_left => .shift_left,
-                .shift_right => .shift_right,
+                .shl => .shl,
+                .shr => .shr,
             };
         }
     };

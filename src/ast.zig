@@ -125,11 +125,13 @@ pub const Expression = union(enum) {
     int: IntExpression,
     float: FloatExpression,
     identifier: IdentifierExpression,
+    unary: UnaryExpression,
     binary: BinaryExpression,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .identifier => |*identifier| identifier.deinit(allocator),
+            .unary => |*unary| unary.deinit(allocator),
             .binary => |*binary| binary.deinit(allocator),
             else => {},
         }
@@ -159,6 +161,42 @@ pub const IdentifierExpression = struct {
     }
 };
 
+pub const UnaryExpression = struct {
+    const Self = @This();
+
+    pub const Op = enum {
+        pos,
+        neg,
+        log_not,
+
+        pub fn fromTokenKind(kind: Token.Kind) Op {
+            return switch (kind) {
+                .plus => .pos,
+                .minus => .neg,
+                .bang => .log_not,
+                else => unreachable,
+            };
+        }
+    };
+
+    op: Op,
+    expr: *Expression,
+
+    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression) !Self {
+        var self = UnaryExpression{ .op = op, .expr = undefined };
+        self.expr = try allocator.create(Expression);
+        errdefer allocator.destroy(self.expr);
+        self.expr.* = expr;
+        return self;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.expr.deinit(allocator);
+        allocator.destroy(self.expr);
+        self.* = undefined;
+    }
+};
+
 pub const BinaryExpression = struct {
     const Self = @This();
 
@@ -169,7 +207,7 @@ pub const BinaryExpression = struct {
         div,
         mod,
         eq,
-        ne,
+        neq,
         lt,
         le,
         gt,
@@ -179,8 +217,8 @@ pub const BinaryExpression = struct {
         bit_and,
         bit_or,
         bit_xor,
-        shift_left,
-        shift_right,
+        shl,
+        shr,
 
         pub fn fromTokenKind(kind: Token.Kind) Op {
             return switch (kind) {
@@ -190,7 +228,7 @@ pub const BinaryExpression = struct {
                 .slash => .div,
                 .percent => .mod,
                 .equal_equal => .eq,
-                .bang_equal => .ne,
+                .bang_equal => .neq,
                 .less => .lt,
                 .less_equal => .le,
                 .greater => .gt,
@@ -200,8 +238,8 @@ pub const BinaryExpression = struct {
                 .ampersand => .bit_and,
                 .pipe => .bit_or,
                 .caret => .bit_xor,
-                .less_less => .shift_left,
-                .greater_greater => .shift_right,
+                .less_less => .shl,
+                .greater_greater => .shr,
                 else => unreachable,
             };
         }
@@ -232,24 +270,4 @@ pub const BinaryExpression = struct {
         allocator.destroy(self.right);
         self.* = undefined;
     }
-};
-
-pub const UnaryExpression = struct {
-    const Self = @This();
-
-    pub const Op = enum {
-        pos,
-        neg,
-
-        pub fn fromTokenKind(kind: Token.Kind) Op {
-            return switch (kind) {
-                .plus => .pos,
-                .minus => .neg,
-                else => unreachable,
-            };
-        }
-    };
-
-    op: Op,
-    expr: *Expression,
 };

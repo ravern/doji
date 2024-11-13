@@ -39,6 +39,7 @@ pub const Generator = struct {
                 _ = try frame.chunk.appendInst(self.allocator, .false);
             },
             .int => |int| {
+                // FIXME: check for int size
                 _ = try frame.chunk.appendInstArg(self.allocator, .int, @intCast(int.int));
             },
             .float => |float| {
@@ -52,6 +53,10 @@ pub const Generator = struct {
                     try self.reporter.report(self.source, identifier.span, "undefined variable: {s}", .{identifier.identifier});
                     return error.CompileFailed;
                 }
+            },
+            .unary => |unary| {
+                try self.generateExpression(frame, unary.expr);
+                _ = try frame.chunk.appendInst(self.allocator, bytecode.Instruction.Op.fromUnaryOp(unary.op));
             },
             .binary => |binary| {
                 try self.generateExpression(frame, binary.left);

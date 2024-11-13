@@ -8,6 +8,10 @@ const Reporter = @import("Reporter.zig");
 pub const Parser = struct {
     const Self = @This();
 
+    const Error = error{CompileFailed} ||
+        @TypeOf(std.io.getStdErr().writer()).Error ||
+        std.mem.Allocator.Error;
+
     pub const prefix_precedence = std.EnumMap(ast.Token.Kind, usize).init(.{
         .plus = 21,
         .minus = 21,
@@ -59,8 +63,8 @@ pub const Parser = struct {
         return self.parsePrattExpression(allocator, 0);
     }
 
-    fn parsePrattExpression(self: *Self, allocator: std.mem.Allocator, min_precedence: usize) !ast.Expression {
-        var left = try self.parsePrattPrimary(allocator);
+    fn parsePrattExpression(self: *Self, allocator: std.mem.Allocator, min_precedence: usize) Error!ast.Expression {
+        var left = try self.parsePrattPrefix(allocator);
 
         while (true) {
             const token = try self.peek();
@@ -77,6 +81,17 @@ pub const Parser = struct {
         }
 
         return left;
+    }
+
+    fn parsePrattPrefix(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
+        const token = try self.peek();
+        const precedence = prefix_precedence.get(token.kind) orelse return self.parsePrattPrimary(allocator);
+
+        const op_token = try self.advance();
+        const op = ast.UnaryExpression.Op.fromTokenKind(op_token.kind);
+
+        const expr = try self.parsePrattExpression(allocator, precedence);
+        return .{ .unary = try ast.UnaryExpression.init(allocator, op, expr) };
     }
 
     fn parsePrattPrimary(self: *Self, allocator: std.mem.Allocator) !ast.Expression {

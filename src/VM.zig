@@ -11,17 +11,32 @@ const Fiber = @import("Fiber.zig");
 
 const Self = @This();
 
+const unary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value) ?Value).init(.{
+    .pos = Value.pos,
+    .neg = Value.neg,
+    .log_not = Value.logNot,
+    .bit_not = Value.bitNot,
+});
+
 const binary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value, Value) ?Value).init(.{
     .add = Value.add,
     .sub = Value.sub,
     .mul = Value.mul,
     .div = Value.div,
     .mod = Value.mod,
+    .eq = Value.eq,
+    .neq = Value.neq,
+    .lt = Value.lt,
+    .le = Value.le,
+    .gt = Value.gt,
+    .ge = Value.ge,
+    .log_and = Value.logAnd,
+    .log_or = Value.logOr,
     .bit_and = Value.bitAnd,
     .bit_or = Value.bitOr,
     .bit_xor = Value.bitXor,
-    .shift_left = Value.shiftLeft,
-    .shift_right = Value.shiftRight,
+    .shl = Value.shl,
+    .shr = Value.shr,
 });
 
 allocator: std.mem.Allocator,
@@ -70,7 +85,34 @@ pub fn eval(self: *Self, source: Source) !Value {
 
             .local => try fiber.push(fiber.getLocal(inst.arg)),
 
-            .add, .sub, .mul, .div, .mod, .bit_and, .bit_or, .bit_xor, .shift_left, .shift_right => {
+            .pos,
+            .neg,
+            .log_not,
+            .bit_not,
+            => {
+                const value = fiber.pop() orelse unreachable;
+                try fiber.push(unary_ops.get(inst.op).?(value).?);
+            },
+
+            .add,
+            .sub,
+            .mul,
+            .div,
+            .mod,
+            .eq,
+            .neq,
+            .lt,
+            .le,
+            .gt,
+            .ge,
+            .log_and,
+            .log_or,
+            .bit_and,
+            .bit_or,
+            .bit_xor,
+            .shl,
+            .shr,
+            => {
                 // FIXME: bunch of uncaught errors here
                 const right = fiber.pop() orelse unreachable;
                 const left = fiber.pop() orelse unreachable;

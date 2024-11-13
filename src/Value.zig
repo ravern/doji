@@ -4,6 +4,7 @@ const Object = @import("Object.zig");
 const Self = @This();
 
 const q_nan: u64 = 0x7ffc000000000000;
+const value_mask: u64 = 0x0003fffffffffffffc;
 
 const tag_nil: usize = 0x0000000000000000;
 const tag_true: usize = 0x0000000000000001;
@@ -27,6 +28,14 @@ pub fn initFloat(float: f64) Self {
     return Self{ .raw = @bitCast(float) };
 }
 
+pub fn isNil(self: Self) bool {
+    return self.raw == nil.raw;
+}
+
+pub fn isBool(self: Self) bool {
+    return !self.isFloat() and !self.isObject() and (self.raw & tag_true == tag_true or self.raw & tag_false == tag_false);
+}
+
 pub fn isInt(self: Self) bool {
     return !self.isFloat() and !self.isObject() and self.raw & tag_int == tag_int;
 }
@@ -39,9 +48,14 @@ pub fn isObject(self: Self) bool {
     return !self.isFloat() and self.raw & tag_object == tag_object;
 }
 
+pub fn toBool(self: Self) ?bool {
+    if (!self.isBool()) return null;
+    return self.raw & tag_true == tag_true;
+}
+
 pub fn toInt(self: Self) ?i48 {
     if (!self.isInt()) return null;
-    return @intCast(@as(i64, @bitCast((self.raw ^ q_nan) >> 2)));
+    return @truncate(@as(i64, @bitCast((self.raw ^ q_nan) >> 2)));
 }
 
 pub fn toFloat(self: Self) ?f64 {
@@ -66,6 +80,30 @@ pub fn div(self: Self, other: Self) ?Self {
 pub fn mod(self: Self, other: Self) ?Self {
     return self.intBinaryOp(other, intMod);
 }
+pub fn eq(self: Self, other: Self) ?Self {
+    return initBool(self.isEqual(other));
+}
+pub fn neq(self: Self, other: Self) ?Self {
+    return initBool(!self.isEqual(other));
+}
+pub fn lt(self: Self, other: Self) ?Self {
+    return self.intBinaryOp(other, intLt);
+}
+pub fn le(self: Self, other: Self) ?Self {
+    return self.intBinaryOp(other, intLe);
+}
+pub fn gt(self: Self, other: Self) ?Self {
+    return self.intBinaryOp(other, intGt);
+}
+pub fn ge(self: Self, other: Self) ?Self {
+    return self.intBinaryOp(other, intGe);
+}
+pub fn logAnd(self: Self, other: Self) ?Self {
+    return boolBinaryOp(self, other, boolAnd);
+}
+pub fn logOr(self: Self, other: Self) ?Self {
+    return boolBinaryOp(self, other, boolOr);
+}
 pub fn bitAnd(self: Self, other: Self) ?Self {
     return self.intBinaryOp(other, intBitAnd);
 }
@@ -75,97 +113,158 @@ pub fn bitOr(self: Self, other: Self) ?Self {
 pub fn bitXor(self: Self, other: Self) ?Self {
     return self.intBinaryOp(other, intBitXor);
 }
-pub fn shiftLeft(self: Self, other: Self) ?Self {
+pub fn shl(self: Self, other: Self) ?Self {
     return self.intBinaryOp(other, intShiftLeft);
 }
-pub fn shiftRight(self: Self, other: Self) ?Self {
+pub fn shr(self: Self, other: Self) ?Self {
     return self.intBinaryOp(other, intShiftRight);
 }
+pub fn pos(self: Self) ?Self {
+    return self.intOrFloatUnaryOp(initInt, initFloat);
+}
 pub fn neg(self: Self) ?Self {
-    return self.intUnaryOp(intNeg);
+    return self.intOrFloatUnaryOp(intNeg, floatNeg);
 }
 pub fn bitNot(self: Self) ?Self {
     return self.intUnaryOp(intBitNot);
 }
+pub fn logNot(self: Self) ?Self {
+    return self.boolUnaryOp(boolNot);
+}
 
-fn intOrFloatBinaryOp(self: Self, other: Self, intOp: fn (i48, i48) i48, floatOp: fn (f64, f64) f64) ?Self {
+fn intOrFloatBinaryOp(self: Self, other: Self, intOp: fn (i48, i48) Self, floatOp: fn (f64, f64) Self) ?Self {
     if (self.isInt() and other.isInt()) {
-        return initInt(@intCast(intOp(self.toInt().?, other.toInt().?)));
+        return intOp(self.toInt().?, other.toInt().?);
     } else if (self.isFloat() and other.isFloat()) {
-        return initFloat(floatOp(self.toFloat().?, other.toFloat().?));
+        return floatOp(self.toFloat().?, other.toFloat().?);
     } else if (self.isInt() and other.isFloat()) {
-        return initFloat(floatOp(@as(f64, @floatFromInt(self.toInt().?)), other.toFloat().?));
+        return floatOp(@as(f64, @floatFromInt(self.toInt().?)), other.toFloat().?);
     } else if (self.isFloat() and other.isInt()) {
-        return initFloat(floatOp(self.toFloat().?, @as(f64, @floatFromInt(other.toInt().?))));
+        return floatOp(self.toFloat().?, @as(f64, @floatFromInt(other.toInt().?)));
     } else {
         return null;
     }
 }
 
-fn intBinaryOp(self: Self, other: Self, op: fn (i48, i48) i48) ?Self {
+fn intBinaryOp(self: Self, other: Self, op: fn (i48, i48) Self) ?Self {
     if (self.isInt() and other.isInt()) {
-        return initInt(op(self.toInt().?, other.toInt().?));
+        return op(self.toInt().?, other.toInt().?);
     } else {
         return null;
     }
 }
 
-fn intUnaryOp(self: Self, op: fn (i48) i48) ?Self {
+fn boolBinaryOp(self: Self, other: Self, op: fn (bool, bool) Self) ?Self {
+    if (self.isBool() and other.isBool()) {
+        return op(self.toBool().?, other.toBool().?);
+    } else {
+        return null;
+    }
+}
+
+fn intOrFloatUnaryOp(self: Self, intOp: fn (i48) Self, floatOp: fn (f64) Self) ?Self {
     if (self.isInt()) {
-        return initInt(op(self.toInt().?));
+        return intOp(self.toInt().?);
+    } else if (self.isFloat()) {
+        return floatOp(self.toFloat().?);
     } else {
         return null;
     }
 }
 
-fn intAdd(left: i48, right: i48) i48 {
-    return left + right;
-}
-fn intSub(left: i48, right: i48) i48 {
-    return left - right;
-}
-fn intMul(left: i48, right: i48) i48 {
-    return left * right; // FIXME: should cast to float on overflow
-}
-fn intDiv(left: i48, right: i48) i48 {
-    return @divTrunc(left, right);
-}
-fn intMod(left: i48, right: i48) i48 {
-    return @rem(left, right); // FIXME: check for right < 0
-}
-fn intBitAnd(left: i48, right: i48) i48 {
-    return left & right;
-}
-fn intBitOr(left: i48, right: i48) i48 {
-    return left | right;
-}
-fn intBitXor(left: i48, right: i48) i48 {
-    return left ^ right;
-}
-fn intShiftLeft(left: i48, right: i48) i48 {
-    return left << @intCast(right); // FIXME: check for right > max u6
-}
-fn intShiftRight(left: i48, right: i48) i48 {
-    return left >> @intCast(right); // FIXME: check for right > max u6
-}
-fn intNeg(int: i48) i48 {
-    return -int;
-}
-fn intBitNot(int: i48) i48 {
-    return ~int;
+fn intUnaryOp(self: Self, op: fn (i48) Self) ?Self {
+    if (self.isInt()) {
+        return op(self.toInt().?);
+    } else {
+        return null;
+    }
 }
 
-fn floatAdd(left: f64, right: f64) f64 {
-    return left + right;
+fn boolUnaryOp(self: Self, op: fn (bool) Self) ?Self {
+    if (self.isBool()) {
+        return op(self.toBool().?);
+    } else {
+        return null;
+    }
 }
-fn floatSub(left: f64, right: f64) f64 {
-    return left - right;
+
+fn intAdd(left: i48, right: i48) Self {
+    return initInt(left + right);
 }
-fn floatMul(left: f64, right: f64) f64 {
-    return left * right;
+fn intSub(left: i48, right: i48) Self {
+    return initInt(left - right);
 }
-fn floatDiv(left: f64, right: f64) f64 {
-    return left / right;
+fn intMul(left: i48, right: i48) Self {
+    return initInt(left * right); // FIXME: should cast to float on overflow
+}
+fn intDiv(left: i48, right: i48) Self {
+    return initInt(@divTrunc(left, right));
+}
+fn intMod(left: i48, right: i48) Self {
+    return initInt(@rem(left, right)); // FIXME: check for right < 0
+}
+fn intBitAnd(left: i48, right: i48) Self {
+    return initInt(left & right);
+}
+fn intBitOr(left: i48, right: i48) Self {
+    return initInt(left | right);
+}
+fn intBitXor(left: i48, right: i48) Self {
+    return initInt(left ^ right);
+}
+fn intShiftLeft(left: i48, right: i48) Self {
+    return initInt(left << @intCast(right)); // FIXME: check for right > max u6
+}
+fn intShiftRight(left: i48, right: i48) Self {
+    return initInt(left >> @intCast(right)); // FIXME: check for right > max u6
+}
+fn intLt(left: i48, right: i48) Self {
+    return initBool(left < right);
+}
+fn intLe(left: i48, right: i48) Self {
+    return initBool(left <= right);
+}
+fn intGt(left: i48, right: i48) Self {
+    return initBool(left > right);
+}
+fn intGe(left: i48, right: i48) Self {
+    return initBool(left >= right);
+}
+fn intNeg(int: i48) Self {
+    return initInt(-int);
+}
+fn intBitNot(int: i48) Self {
+    return initInt(~int);
+}
+
+fn floatAdd(left: f64, right: f64) Self {
+    return initFloat(left + right);
+}
+fn floatSub(left: f64, right: f64) Self {
+    return initFloat(left - right);
+}
+fn floatMul(left: f64, right: f64) Self {
+    return initFloat(left * right);
+}
+fn floatDiv(left: f64, right: f64) Self {
+    return initFloat(left / right);
+}
+fn floatNeg(float: f64) Self {
+    return initFloat(-float);
+}
+
+fn boolAnd(left: bool, right: bool) Self {
+    return initBool(left and right);
+}
+fn boolOr(left: bool, right: bool) Self {
+    return initBool(left or right);
+}
+fn boolNot(b: bool) Self {
+    return initBool(!b);
+}
+
+fn isEqual(self: Self, other: Self) bool {
+    return self.raw == other.raw;
 }
 
 pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
