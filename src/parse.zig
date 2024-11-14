@@ -12,6 +12,11 @@ pub const Parser = struct {
         @TypeOf(std.io.getStdErr().writer()).Error ||
         std.mem.Allocator.Error;
 
+    const StatementOrExpression = union(enum) {
+        stmt: ast.Statement,
+        expr: ast.Expression,
+    };
+
     pub const prefix_precedence = std.EnumMap(ast.Token.Kind, usize).init(.{
         .plus = 21,
         .minus = 21,
@@ -59,8 +64,57 @@ pub const Parser = struct {
         return ast.Root{ .expr = expr };
     }
 
-    fn parseExpression(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
-        return self.parsePrattExpression(allocator, 0);
+    fn parseExpression(self: *Self, allocator: std.mem.Allocator) Error!ast.Expression {
+        const token = try self.peek();
+        switch (token.kind) {
+            .l_brace => return self.parseBlock(allocator),
+            else => return self.parsePrattExpression(allocator, 0),
+        }
+    }
+
+    fn parseBlock(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
+        const l_brace_token = try self.advance();
+
+        var span = l_brace_token.span;
+        var stmts = std.ArrayListUnmanaged(ast.Statement){};
+        defer stmts.deinit(allocator);
+        var ret_expr: ?ast.Expression = null;
+
+        while (true) {
+            const token = try self.peek();
+
+            if (token.kind == .r_brace) {
+                span = span.merge(token.span);
+                break;
+            }
+
+            switch (try self.parseStatementOrExpression(allocator)) {
+                .stmt => |stmt| try stmts.append(allocator, stmt),
+                .expr => |expr| ret_expr = expr,
+            }
+
+            if (ret_expr) |_| {
+                const r_brace_token = try self.peek();
+                if (r_brace_token.kind != .r_brace) {
+                    try self.reporter.report(self.source, r_brace_token.span, "unexpected token: {s}", .{r_brace_token.toString()});
+                    return error.CompileFailed;
+                }
+            }
+        }
+
+        return .{ .block = try ast.Block.init(allocator, stmts.items, ret_expr, span) };
+    }
+
+    fn parseStatementOrExpression(self: *Self, allocator: std.mem.Allocator) !StatementOrExpression {
+        const expr = try self.parseExpression(allocator);
+
+        const token = try self.peek();
+        if (token.kind == .semicolon) {
+            _ = try self.advance();
+            return .{ .stmt = .{ .expr = try ast.ExpressionStatement.init(allocator, expr, token.span) } };
+        } else {
+            return .{ .expr = expr };
+        }
     }
 
     fn parsePrattExpression(self: *Self, allocator: std.mem.Allocator, min_precedence: usize) Error!ast.Expression {

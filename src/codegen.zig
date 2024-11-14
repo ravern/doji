@@ -8,6 +8,10 @@ const Source = @import("Source.zig");
 pub const Generator = struct {
     const Self = @This();
 
+    const Error = error{CompileFailed} ||
+        @TypeOf(std.io.getStdErr().writer()).Error ||
+        std.mem.Allocator.Error;
+
     allocator: std.mem.Allocator,
     reporter: *Reporter,
     source: Source,
@@ -27,7 +31,7 @@ pub const Generator = struct {
         return frame.chunk;
     }
 
-    pub fn generateExpression(self: *Self, frame: *Frame, expr: *const ast.Expression) !void {
+    fn generateExpression(self: *Self, frame: *Frame, expr: *const ast.Expression) Error!void {
         switch (expr.*) {
             .nil => {
                 _ = try frame.chunk.appendInst(self.allocator, .nil);
@@ -62,6 +66,34 @@ pub const Generator = struct {
                 try self.generateExpression(frame, binary.left);
                 try self.generateExpression(frame, binary.right);
                 _ = try frame.chunk.appendInst(self.allocator, bytecode.Instruction.Op.fromBinaryOp(binary.op));
+            },
+            .block => |block| {
+                try self.generateBlock(frame, &block);
+            },
+        }
+    }
+
+    fn generateBlock(self: *Self, frame: *Frame, block: *const ast.Block) !void {
+        frame.pushScope();
+
+        for (block.stmts) |stmt| {
+            try self.generateStatement(frame, stmt);
+        }
+
+        if (block.ret_expr) |ret_expr| {
+            try self.generateExpression(frame, ret_expr);
+        } else {
+            _ = try frame.chunk.appendInst(self.allocator, .nil);
+        }
+
+        frame.popScope();
+    }
+
+    fn generateStatement(self: *Self, frame: *Frame, stmt: ast.Statement) !void {
+        switch (stmt) {
+            .expr => |expr_stmt| {
+                try self.generateExpression(frame, expr_stmt.expr);
+                _ = try frame.chunk.appendInst(self.allocator, .pop);
             },
         }
     }

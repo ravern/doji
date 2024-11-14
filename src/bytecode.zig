@@ -15,6 +15,9 @@ pub const Instruction = packed struct {
         local,
         store_local,
 
+        dup,
+        pop,
+
         add,
         sub,
         mul,

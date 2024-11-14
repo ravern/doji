@@ -28,6 +28,6 @@ pub fn main() !void {
 
         const source = doji.Source.initStdin(line);
         const result = vm.eval(source) catch continue;
-        std.debug.print("{}\n", .{result});
+        try out.print("{}\n", .{result});
     }
 }

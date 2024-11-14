@@ -85,6 +85,8 @@ pub fn eval(self: *Self, source: Source) !Value {
 
             .local => try fiber.push(fiber.getLocal(inst.arg)),
 
+            .pop => _ = fiber.pop(),
+
             .pos,
             .neg,
             .log_not,

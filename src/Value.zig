@@ -4,7 +4,9 @@ const Object = @import("Object.zig");
 const Self = @This();
 
 const q_nan: u64 = 0x7ffc000000000000;
-const value_mask: u64 = 0x0003fffffffffffffc;
+
+const mask_tag: u64 = 0x000000000000000003;
+const mask_payload: u64 = 0x0003fffffffffffffc;
 
 const tag_nil: usize = 0x0000000000000000;
 const tag_true: usize = 0x0000000000000001;
@@ -33,11 +35,11 @@ pub fn isNil(self: Self) bool {
 }
 
 pub fn isBool(self: Self) bool {
-    return !self.isFloat() and !self.isObject() and (self.raw & tag_true == tag_true or self.raw & tag_false == tag_false);
+    return !self.isFloat() and !self.isObject() and (self.raw & mask_tag == tag_true or self.raw & mask_tag == tag_false);
 }
 
 pub fn isInt(self: Self) bool {
-    return !self.isFloat() and !self.isObject() and self.raw & tag_int == tag_int;
+    return !self.isFloat() and !self.isObject() and self.raw & mask_tag == tag_int;
 }
 
 pub fn isFloat(self: Self) bool {
@@ -271,7 +273,11 @@ pub fn format(self: *const Self, comptime fmt: []const u8, options: std.fmt.Form
     _ = fmt;
     _ = options;
 
-    if (self.isInt()) {
+    if (self.isNil()) {
+        return writer.writeAll("nil");
+    } else if (self.isBool()) {
+        return writer.writeAll(if (self.toBool().?) "true" else "false");
+    } else if (self.isInt()) {
         return writer.print("{d}", .{self.toInt().?});
     } else if (self.isFloat()) {
         return writer.print("{d}", .{self.toFloat().?});

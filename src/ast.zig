@@ -127,12 +127,14 @@ pub const Expression = union(enum) {
     identifier: IdentifierExpression,
     unary: UnaryExpression,
     binary: BinaryExpression,
+    block: Block,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .identifier => |*identifier| identifier.deinit(allocator),
             .unary => |*unary| unary.deinit(allocator),
             .binary => |*binary| binary.deinit(allocator),
+            .block => |*block| block.deinit(allocator),
             else => {},
         }
         self.* = undefined;
@@ -268,6 +270,76 @@ pub const BinaryExpression = struct {
         allocator.destroy(self.left);
         self.right.deinit(allocator);
         allocator.destroy(self.right);
+        self.* = undefined;
+    }
+};
+
+pub const Block = struct {
+    const Self = @This();
+
+    stmts: []Statement,
+    ret_expr: ?*Expression,
+    span: Span,
+
+    pub fn init(allocator: std.mem.Allocator, stmts: []Statement, ret_expr: ?Expression, span: Span) !Self {
+        var self = Self{ .stmts = undefined, .ret_expr = null, .span = span };
+
+        self.stmts = try allocator.dupe(Statement, stmts);
+
+        if (ret_expr) |expr| {
+            self.ret_expr = try allocator.create(Expression);
+            errdefer allocator.destroy(self.ret_expr.?);
+            self.ret_expr.?.* = expr;
+        }
+
+        return self;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        for (self.stmts) |*stmt| {
+            stmt.deinit(allocator);
+        }
+        allocator.free(self.stmts);
+
+        if (self.ret_expr) |expr| {
+            expr.deinit(allocator);
+            allocator.destroy(expr);
+        }
+
+        self.* = undefined;
+    }
+};
+
+pub const Statement = union(enum) {
+    const Self = @This();
+
+    expr: ExpressionStatement,
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .expr => |*expr| expr.deinit(allocator),
+        }
+        self.* = undefined;
+    }
+};
+
+pub const ExpressionStatement = struct {
+    const Self = @This();
+
+    expr: *Expression,
+    span: Span,
+
+    pub fn init(allocator: std.mem.Allocator, expr: Expression, span: Span) !Self {
+        var self = Self{ .expr = undefined, .span = span };
+        self.expr = try allocator.create(Expression);
+        errdefer allocator.destroy(self.expr);
+        self.expr.* = expr;
+        return self;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.expr.deinit(allocator);
+        allocator.destroy(self.expr);
         self.* = undefined;
     }
 };
