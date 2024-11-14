@@ -26,7 +26,7 @@ pub const Generator = struct {
 
     pub fn generate(self: *Self, root: ast.Root) !bytecode.Chunk {
         var frame = Frame{};
-        try self.generateExpression(&frame, root.expr);
+        try self.generateBlock(&frame, root.block);
         _ = try frame.chunk.appendInst(self.allocator, .ret);
         return frame.chunk;
     }

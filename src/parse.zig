@@ -3,6 +3,7 @@ const ast = @import("ast.zig");
 const scan = @import("scan.zig");
 const Scanner = scan.Scanner;
 const Source = @import("Source.zig");
+const Span = @import("Span.zig");
 const Reporter = @import("Reporter.zig");
 
 pub const Parser = struct {
@@ -58,19 +59,12 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Self, allocator: std.mem.Allocator) !ast.Root {
-        const root_expr = try allocator.create(ast.Expression);
-        errdefer allocator.destroy(root_expr);
-        switch (try self.parseStatementOrExpression(allocator)) {
-            .stmt => |stmt| root_expr.* = .{ .block = try ast.Block.initSingleStatement(allocator, stmt, stmt.getSpan()) },
-            .expr => |expr| root_expr.* = expr,
-        }
-        return ast.Root{ .expr = root_expr };
+        const block = try self.parseBlock(allocator, Span.zero, .eof);
+        return ast.Root.init(allocator, block);
     }
 
-    fn parseBlock(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
-        const l_brace_token = try self.expect(.l_brace);
-
-        var span = l_brace_token.span;
+    fn parseBlock(self: *Self, allocator: std.mem.Allocator, init_span: Span, term_token_kind: ast.Token.Kind) !ast.Block {
+        var span = init_span;
         var stmts = std.ArrayListUnmanaged(ast.Statement){};
         defer stmts.deinit(allocator);
         var ret_expr: ?ast.Expression = null;
@@ -78,7 +72,8 @@ pub const Parser = struct {
         while (true) {
             const token = try self.peek();
 
-            if (token.kind == .r_brace) {
+            if (token.kind == term_token_kind) {
+                _ = try self.expect(term_token_kind);
                 span = span.merge(token.span);
                 break;
             }
@@ -89,15 +84,15 @@ pub const Parser = struct {
             }
 
             if (ret_expr) |_| {
-                const r_brace_token = try self.peek();
-                if (r_brace_token.kind != .r_brace) {
-                    try self.reporter.report(self.source, r_brace_token.span, "unexpected token: {s}", .{r_brace_token.kind.toString()});
+                const term_token = try self.peek();
+                if (term_token.kind != term_token_kind) {
+                    try self.reporter.report(self.source, term_token.span, "unexpected token: {s}", .{term_token.kind.toString()});
                     return error.CompileFailed;
                 }
             }
         }
 
-        return .{ .block = try ast.Block.init(allocator, stmts.items, ret_expr, span) };
+        return ast.Block.init(allocator, stmts.items, ret_expr, span);
     }
 
     fn parseStatementOrExpression(self: *Self, allocator: std.mem.Allocator) !StatementOrExpression {
@@ -117,14 +112,6 @@ pub const Parser = struct {
         }
     }
 
-    fn parseExpression(self: *Self, allocator: std.mem.Allocator) Error!ast.Expression {
-        const token = try self.peek();
-        switch (token.kind) {
-            .l_brace => return self.parseBlock(allocator),
-            else => return self.parsePrattExpression(allocator, 0),
-        }
-    }
-
     fn parseLetStatement(self: *Self, allocator: std.mem.Allocator) !ast.Statement {
         const let_token = try self.expect(.let);
         const pattern = try self.parsePattern(allocator);
@@ -134,15 +121,17 @@ pub const Parser = struct {
         return .{ .let = try ast.LetStatement.init(allocator, pattern, expr, let_token.span.merge(expr.getSpan())) };
     }
 
-    fn parsePattern(self: *Self, allocator: std.mem.Allocator) !ast.Pattern {
+    fn parseExpression(self: *Self, allocator: std.mem.Allocator) Error!ast.Expression {
         const token = try self.peek();
-        return switch (token.kind) {
-            .identifier => .{ .identifier = try self.parseIdentifier(allocator) },
-            else => {
-                try self.reporter.report(self.source, token.span, "unexpected token: {s}", .{token.kind.toString()});
-                return error.CompileFailed;
-            },
-        };
+        switch (token.kind) {
+            .l_brace => return self.parseBlockExpression(allocator),
+            else => return self.parsePrattExpression(allocator, 0),
+        }
+    }
+
+    fn parseBlockExpression(self: *Self, allocator: std.mem.Allocator) !ast.Expression {
+        const l_brace_token = try self.expect(.l_brace);
+        return .{ .block = try self.parseBlock(allocator, l_brace_token.span, .r_brace) };
     }
 
     fn parsePrattExpression(self: *Self, allocator: std.mem.Allocator, min_precedence: usize) Error!ast.Expression {
@@ -212,6 +201,17 @@ pub const Parser = struct {
             .identifier => return .{
                 .identifier = try self.parseIdentifier(allocator),
             },
+            else => {
+                try self.reporter.report(self.source, token.span, "unexpected token: {s}", .{token.kind.toString()});
+                return error.CompileFailed;
+            },
+        };
+    }
+
+    fn parsePattern(self: *Self, allocator: std.mem.Allocator) !ast.Pattern {
+        const token = try self.peek();
+        return switch (token.kind) {
+            .identifier => .{ .identifier = try self.parseIdentifier(allocator) },
             else => {
                 try self.reporter.report(self.source, token.span, "unexpected token: {s}", .{token.kind.toString()});
                 return error.CompileFailed;
