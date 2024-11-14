@@ -91,6 +91,14 @@ pub const Generator = struct {
 
     fn generateStatement(self: *Self, frame: *Frame, stmt: ast.Statement) !void {
         switch (stmt) {
+            .let => |let_stmt| {
+                try self.generateExpression(frame, let_stmt.expr);
+                // TODO: only handles identifier patterns for now
+                _ = (try frame.declareLocal(self.allocator, let_stmt.pattern.identifier.identifier)) orelse {
+                    try self.reporter.report(self.source, let_stmt.pattern.getSpan(), "variable already declared: {s}", .{let_stmt.pattern.identifier.identifier});
+                    return error.CompileFailed;
+                };
+            },
             .expr => |expr_stmt| {
                 try self.generateExpression(frame, expr_stmt.expr);
                 _ = try frame.chunk.appendInst(self.allocator, .pop);
@@ -119,11 +127,27 @@ const Frame = struct {
 
     pub fn popScope(self: *Self) void {
         while (true) {
-            const local = self.locals.popOrNull() orelse break;
+            const local = self.locals.getLastOrNull() orelse break;
             if (local.scope != self.cur_scope) break;
             _ = self.locals.pop();
         }
         self.cur_scope -= 1;
+    }
+
+    pub fn declareLocal(self: *Self, allocator: std.mem.Allocator, identifier: []const u8) !?Local {
+        if (self.getLocal(identifier)) |local| {
+            if (local.scope == self.cur_scope) {
+                return null;
+            }
+        }
+        const local = Local{
+            .scope = self.cur_scope,
+            .slot = self.locals.items.len,
+            .identifier = identifier,
+            .is_captured = false,
+        };
+        try self.locals.append(allocator, local);
+        return local;
     }
 
     pub fn getLocal(self: *Self, identifier: []const u8) ?Local {

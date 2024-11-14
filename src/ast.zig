@@ -51,57 +51,58 @@ pub const Token = struct {
         nil,
         true,
         false,
+        let,
 
         // others
         identifier,
         eof,
+
+        pub fn toString(self: Kind) []const u8 {
+            return switch (self) {
+                .plus => "'+'",
+                .plus_equal => "'+='",
+                .minus => "'-'",
+                .minus_equal => "'-='",
+                .asterisk => "'*'",
+                .asterisk_equal => "'*='",
+                .slash => "'/'",
+                .slash_equal => "'/='",
+                .percent => "'%'",
+                .percent_equal => "'%='",
+                .equal => "'='",
+                .equal_equal => "'=='",
+                .bang => "'!'",
+                .bang_equal => "'!='",
+                .less => "'<'",
+                .less_equal => "'<='",
+                .less_less => "'<<'",
+                .greater => "'>'",
+                .greater_equal => "'>='",
+                .greater_greater => "'>>'",
+                .ampersand => "'&'",
+                .ampersand_ampersand => "'&&'",
+                .pipe => "'|'",
+                .pipe_pipe => "'||'",
+                .caret => "'^'",
+                .tilde => "'~'",
+                .period => "'.'",
+                .comma => "','",
+                .colon => "':'",
+                .semicolon => "';'",
+                .l_brace => "'{'",
+                .r_brace => "'}'",
+                .l_paren => "'('",
+                .r_paren => "')'",
+                .l_bracket => "'['",
+                .r_bracket => "']'",
+                .eof => "end of file",
+                else => @tagName(self),
+            };
+        }
     };
 
     kind: Kind,
     span: Span,
-
-    pub fn toString(self: Self) []const u8 {
-        return switch (self.kind) {
-            .plus => "'+'",
-            .plus_equal => "'+='",
-            .minus => "'-'",
-            .minus_equal => "'-='",
-            .asterisk => "'*'",
-            .asterisk_equal => "'*='",
-            .slash => "'/'",
-            .slash_equal => "'/='",
-            .percent => "'%'",
-            .percent_equal => "'%='",
-            .equal => "'='",
-            .equal_equal => "'=='",
-            .bang => "'!'",
-            .bang_equal => "'!='",
-            .less => "'<'",
-            .less_equal => "'<='",
-            .less_less => "'<<'",
-            .greater => "'>'",
-            .greater_equal => "'>='",
-            .greater_greater => "'>>'",
-            .ampersand => "'&'",
-            .ampersand_ampersand => "'&&'",
-            .pipe => "'|'",
-            .pipe_pipe => "'||'",
-            .caret => "'^'",
-            .tilde => "'~'",
-            .period => "'.'",
-            .comma => "','",
-            .colon => "':'",
-            .semicolon => "';'",
-            .l_brace => "'{'",
-            .r_brace => "'}'",
-            .l_paren => "'('",
-            .r_paren => "')'",
-            .l_bracket => "'['",
-            .r_bracket => "']'",
-            .eof => "end of file",
-            else => @tagName(self.kind),
-        };
-    }
 };
 
 pub const Root = struct {
@@ -124,7 +125,7 @@ pub const Expression = union(enum) {
     false: Span,
     int: IntExpression,
     float: FloatExpression,
-    identifier: IdentifierExpression,
+    identifier: Identifier,
     unary: UnaryExpression,
     binary: BinaryExpression,
     block: Block,
@@ -139,6 +140,20 @@ pub const Expression = union(enum) {
         }
         self.* = undefined;
     }
+
+    pub fn getSpan(self: Self) Span {
+        return switch (self) {
+            .nil => |span| span,
+            .true => |span| span,
+            .false => |span| span,
+            .int => |int| int.span,
+            .float => |float| float.span,
+            .identifier => |identifier| identifier.span,
+            .unary => |unary| unary.span,
+            .binary => |binary| binary.span,
+            .block => |block| block.span,
+        };
+    }
 };
 
 pub const IntExpression = struct {
@@ -149,18 +164,6 @@ pub const IntExpression = struct {
 pub const FloatExpression = struct {
     float: f64,
     span: Span,
-};
-
-pub const IdentifierExpression = struct {
-    const Self = @This();
-
-    identifier: []const u8,
-    span: Span,
-
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        allocator.free(self.identifier);
-        self.* = undefined;
-    }
 };
 
 pub const UnaryExpression = struct {
@@ -183,9 +186,10 @@ pub const UnaryExpression = struct {
 
     op: Op,
     expr: *Expression,
+    span: Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression) !Self {
-        var self = UnaryExpression{ .op = op, .expr = undefined };
+    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression, span: Span) !Self {
+        var self = UnaryExpression{ .op = op, .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
         self.expr.* = expr;
@@ -250,9 +254,10 @@ pub const BinaryExpression = struct {
     op: Op,
     left: *Expression,
     right: *Expression,
+    span: Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression) !Self {
-        var self = BinaryExpression{ .op = op, .left = undefined, .right = undefined };
+    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression, span: Span) !Self {
+        var self = BinaryExpression{ .op = op, .left = undefined, .right = undefined, .span = span };
 
         self.left = try allocator.create(Expression);
         errdefer allocator.destroy(self.left);
@@ -295,6 +300,15 @@ pub const Block = struct {
         return self;
     }
 
+    pub fn initSingleStatement(allocator: std.mem.Allocator, stmt: Statement, span: Span) !Self {
+        var self = Self{ .stmts = undefined, .ret_expr = null, .span = span };
+
+        self.stmts = try allocator.alloc(Statement, 1);
+        self.stmts[0] = stmt;
+
+        return self;
+    }
+
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         for (self.stmts) |*stmt| {
             stmt.deinit(allocator);
@@ -314,12 +328,21 @@ pub const Statement = union(enum) {
     const Self = @This();
 
     expr: ExpressionStatement,
+    let: LetStatement,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .expr => |*expr| expr.deinit(allocator),
+            .let => |*let| let.deinit(allocator),
         }
         self.* = undefined;
+    }
+
+    pub fn getSpan(self: Self) Span {
+        return switch (self) {
+            .expr => |expr| expr.span,
+            .let => |let| let.span,
+        };
     }
 };
 
@@ -340,6 +363,62 @@ pub const ExpressionStatement = struct {
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
         self.expr.deinit(allocator);
         allocator.destroy(self.expr);
+        self.* = undefined;
+    }
+};
+
+pub const LetStatement = struct {
+    const Self = @This();
+
+    pattern: Pattern,
+    expr: *Expression,
+    span: Span,
+
+    pub fn init(allocator: std.mem.Allocator, pattern: Pattern, expr: Expression, span: Span) !Self {
+        var self = Self{ .pattern = pattern, .expr = undefined, .span = span };
+
+        self.expr = try allocator.create(Expression);
+        errdefer allocator.destroy(self.expr);
+        self.expr.* = expr;
+
+        return self;
+    }
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        self.pattern.deinit(allocator);
+        self.expr.deinit(allocator);
+        allocator.destroy(self.expr);
+        self.* = undefined;
+    }
+};
+
+pub const Pattern = union(enum) {
+    const Self = @This();
+
+    identifier: Identifier,
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        switch (self.*) {
+            .identifier => |*identifier| identifier.deinit(allocator),
+        }
+        self.* = undefined;
+    }
+
+    pub fn getSpan(self: Self) Span {
+        return switch (self) {
+            .identifier => |identifier| identifier.span,
+        };
+    }
+};
+
+pub const Identifier = struct {
+    const Self = @This();
+
+    identifier: []const u8,
+    span: Span,
+
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.identifier);
         self.* = undefined;
     }
 };

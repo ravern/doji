@@ -53,6 +53,7 @@ pub const Scanner = struct {
         .{ "nil", .nil },
         .{ "true", .true },
         .{ "false", .false },
+        .{ "let", .let },
     });
 
     reporter: *Reporter,
