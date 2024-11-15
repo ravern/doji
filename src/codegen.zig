@@ -25,9 +25,18 @@ pub const Generator = struct {
     }
 
     pub fn generate(self: *Self, root: ast.Root) !bytecode.Chunk {
-        var frame = Frame{};
+        var scope = Scope{};
+        defer scope.deinit(self.allocator);
+        return self.generateWithScope(&scope, root);
+    }
+
+    pub fn generateWithScope(self: *Self, scope: *Scope, root: ast.Root) !bytecode.Chunk {
+        var frame = Frame.init(self.allocator);
+        defer frame.deinit();
+        try frame.pushScope(scope.*);
         try self.generateBlock(&frame, root.block);
         _ = try frame.chunk.appendInst(self.allocator, .ret);
+        scope.* = frame.popScope();
         return frame.chunk;
     }
 
@@ -68,14 +77,15 @@ pub const Generator = struct {
                 _ = try frame.chunk.appendInst(self.allocator, bytecode.Instruction.Op.fromBinaryOp(binary.op));
             },
             .block => |block| {
+                try frame.pushFreshScope();
                 try self.generateBlock(frame, &block);
+                var scope = frame.popScope();
+                defer scope.deinit(self.allocator);
             },
         }
     }
 
     fn generateBlock(self: *Self, frame: *Frame, block: *const ast.Block) !void {
-        frame.pushScope();
-
         for (block.stmts) |stmt| {
             try self.generateStatement(frame, stmt);
         }
@@ -85,8 +95,6 @@ pub const Generator = struct {
         } else {
             _ = try frame.chunk.appendInst(self.allocator, .nil);
         }
-
-        frame.popScope();
     }
 
     fn generateStatement(self: *Self, frame: *Frame, stmt: ast.Statement) !void {
@@ -110,47 +118,78 @@ pub const Generator = struct {
 const Frame = struct {
     const Self = @This();
 
+    allocator: std.mem.Allocator,
+    chunk: bytecode.Chunk = .{},
+    scopes: std.ArrayListUnmanaged(Scope) = .{},
+
+    pub fn init(allocator: std.mem.Allocator) Self {
+        return Self{ .allocator = allocator };
+    }
+
+    pub fn deinit(self: *Self) void {
+        for (self.scopes.items) |*scope| {
+            scope.deinit(self.allocator);
+        }
+        self.scopes.deinit(self.allocator);
+        self.* = undefined;
+    }
+
+    pub fn pushFreshScope(self: *Self) !void {
+        try self.scopes.append(self.allocator, .{});
+    }
+
+    pub fn pushScope(self: *Self, scope: Scope) !void {
+        try self.scopes.append(self.allocator, scope);
+    }
+
+    pub fn popScope(self: *Self) Scope {
+        return self.scopes.pop();
+    }
+
+    pub fn declareLocal(self: *Self, allocator: std.mem.Allocator, identifier: []const u8) !?Scope.Local {
+        var scope = &self.scopes.items[self.scopes.items.len - 1];
+        return scope.addLocal(allocator, identifier);
+    }
+
+    pub fn getLocal(self: *const Self, identifier: []const u8) ?Scope.Local {
+        _ = self.scopes.getLast();
+        return self.scopes.getLast().getLocal(identifier);
+    }
+};
+
+pub const Scope = struct {
+    const Self = @This();
+
     const Local = struct {
-        scope: usize,
         slot: usize,
         identifier: []const u8,
         is_captured: bool,
     };
 
-    chunk: bytecode.Chunk = .{},
-    cur_scope: usize = 0,
     locals: std.ArrayListUnmanaged(Local) = .{},
 
-    pub fn pushScope(self: *Self) void {
-        self.cur_scope += 1;
-    }
-
-    pub fn popScope(self: *Self) void {
-        while (true) {
-            const local = self.locals.getLastOrNull() orelse break;
-            if (local.scope != self.cur_scope) break;
-            _ = self.locals.pop();
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        for (self.locals.items) |*local| {
+            allocator.free(local.identifier);
         }
-        self.cur_scope -= 1;
+        self.locals.deinit(allocator);
+        self.* = undefined;
     }
 
-    pub fn declareLocal(self: *Self, allocator: std.mem.Allocator, identifier: []const u8) !?Local {
-        if (self.getLocal(identifier)) |local| {
-            if (local.scope == self.cur_scope) {
-                return null;
-            }
+    pub fn addLocal(self: *Self, allocator: std.mem.Allocator, identifier: []const u8) !?Local {
+        if (self.getLocal(identifier)) |_| {
+            return null;
         }
         const local = Local{
-            .scope = self.cur_scope,
             .slot = self.locals.items.len,
-            .identifier = identifier,
+            .identifier = try allocator.dupe(u8, identifier), // FIXME: because we don't intern strings and ast gets freed
             .is_captured = false,
         };
         try self.locals.append(allocator, local);
         return local;
     }
 
-    pub fn getLocal(self: *Self, identifier: []const u8) ?Local {
+    pub fn getLocal(self: *const Self, identifier: []const u8) ?Local {
         var it = std.mem.reverseIterator(self.locals.items);
         while (it.next()) |local| {
             if (std.mem.eql(u8, local.identifier, identifier)) {

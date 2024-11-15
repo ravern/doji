@@ -41,59 +41,68 @@ const binary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value, Value)
 
 allocator: std.mem.Allocator,
 reporter: Reporter,
+fiber: *Fiber,
+global_scope: codegen.Scope,
 
 pub fn init(allocator: std.mem.Allocator) !Self {
-    return Self{
+    var self = Self{
         .allocator = allocator,
         .reporter = Reporter.init(allocator),
+        .fiber = undefined,
+        .global_scope = codegen.Scope{},
     };
+
+    self.fiber = try allocator.create(Fiber);
+    errdefer allocator.destroy(self.fiber);
+    self.fiber.* = Fiber.init(allocator);
+
+    return self;
 }
 
 pub fn deinit(self: *Self) void {
+    self.fiber.deinit();
+    self.allocator.destroy(self.fiber);
+    self.global_scope.deinit(self.allocator);
     self.* = undefined;
 }
 
 pub fn eval(self: *Self, source: Source) !Value {
+    // we need to offset by the number of locals in the global scope
+    // conveniently, we can use the arity argument to do so
+    // TODO: is this the cleanest way to do this?
+    const arity = self.global_scope.locals.items.len;
+
     var parser = Parser.init(&self.reporter, source);
     var root = try parser.parse(self.allocator);
     defer root.deinit(self.allocator);
 
     var generator = codegen.Generator.init(self.allocator, &self.reporter, source);
-    var chunk = try generator.generate(root);
+    var chunk = try generator.generateWithScope(&self.global_scope, root);
     defer chunk.deinit(self.allocator);
 
-    var fiber = Fiber.init(self.allocator);
-    defer fiber.deinit();
-
-    var ip: usize = 0;
+    try self.fiber.pushFrame(&chunk, arity);
 
     while (true) {
-        if (ip >= chunk.code.items.len) {
-            try self.reporter.report(source, Span.zero, "reached end of bytecode without returning", .{});
-            return error.CorruptedBytecode;
-        }
-
-        const inst = chunk.code.items[ip];
-        ip += 1;
+        const inst = try self.fiber.step();
 
         switch (inst.op) {
-            .nil => try fiber.push(Value.nil),
-            .true => try fiber.push(Value.initBool(true)),
-            .false => try fiber.push(Value.initBool(false)),
-            .int => try fiber.push(Value.initInt(@intCast(inst.arg))),
-            .constant => try fiber.push(chunk.constants.items[inst.arg]),
+            .nil => try self.fiber.push(Value.nil),
+            .true => try self.fiber.push(Value.initBool(true)),
+            .false => try self.fiber.push(Value.initBool(false)),
+            .int => try self.fiber.push(Value.initInt(@intCast(inst.arg))),
+            .constant => try self.fiber.push(chunk.constants.items[inst.arg]),
 
-            .local => try fiber.push(fiber.getLocal(inst.arg)),
+            .local => try self.fiber.push(try self.fiber.getLocal(inst.arg)),
 
-            .pop => _ = fiber.pop(),
+            .pop => _ = try self.fiber.pop(),
 
             .pos,
             .neg,
             .log_not,
             .bit_not,
             => {
-                const value = fiber.pop() orelse unreachable;
-                try fiber.push(unary_ops.get(inst.op).?(value).?);
+                const value = try self.fiber.pop();
+                try self.fiber.push(unary_ops.get(inst.op).?(value).?);
             },
 
             .add,
@@ -116,12 +125,15 @@ pub fn eval(self: *Self, source: Source) !Value {
             .shr,
             => {
                 // FIXME: bunch of uncaught errors here
-                const right = fiber.pop() orelse unreachable;
-                const left = fiber.pop() orelse unreachable;
-                try fiber.push(binary_ops.get(inst.op).?(left, right).?);
+                const right = try self.fiber.pop();
+                const left = try self.fiber.pop();
+                try self.fiber.push(binary_ops.get(inst.op).?(left, right).?);
             },
 
-            .ret => return fiber.pop() orelse unreachable, // FIXME: catch and report
+            .ret => {
+                try self.fiber.popFrame();
+                return try self.fiber.pop();
+            },
 
             else => unreachable,
         }
