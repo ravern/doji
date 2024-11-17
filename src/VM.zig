@@ -1,12 +1,9 @@
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
-const codegen = @import("codegen.zig");
-const parse = @import("parse.zig");
-const Parser = parse.Parser;
+const compile = @import("compile.zig");
+const heap = @import("heap.zig");
 const Source = @import("Source.zig");
-const Span = @import("Span.zig");
 const Value = @import("Value.zig");
-const Reporter = @import("Reporter.zig");
 const Fiber = @import("Fiber.zig");
 
 const Self = @This();
@@ -40,47 +37,52 @@ const binary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value, Value)
 });
 
 allocator: std.mem.Allocator,
-reporter: Reporter,
-fiber: *Fiber,
-global_scope: codegen.Scope,
+gc: *heap.GC,
+string_pool: heap.StringPool,
+root_fiber: *Fiber,
+current_fiber: *Fiber,
+globals_map: []*heap.String = &.{},
 
 pub fn init(allocator: std.mem.Allocator) !Self {
     var self = Self{
         .allocator = allocator,
-        .reporter = Reporter.init(allocator),
-        .fiber = undefined,
-        .global_scope = codegen.Scope{},
+        .gc = heap.GC.init(allocator),
+        .string_pool = undefined,
+        .root_fiber = undefined,
+        .current_fiber = undefined,
     };
 
-    self.fiber = try allocator.create(Fiber);
-    errdefer allocator.destroy(self.fiber);
-    self.fiber.* = Fiber.init(allocator);
+    self.string_pool = heap.StringPool.init(allocator, &self.gc);
+
+    self.root_fiber = try self.gc.create(Fiber);
+    self.root_fiber.* = Fiber.init(allocator);
+
+    self.current_fiber = self.root_fiber;
 
     return self;
 }
 
 pub fn deinit(self: *Self) void {
-    self.fiber.deinit();
-    self.allocator.destroy(self.fiber);
-    self.global_scope.deinit(self.allocator);
+    self.allocator.free(self.globals_map);
     self.* = undefined;
 }
 
-pub fn eval(self: *Self, source: Source) !Value {
+pub fn evaluate(self: *Self, source: Source) !Value {
     // we need to offset by the number of locals in the global scope
     // conveniently, we can use the arity argument to do so
     // TODO: is this the cleanest way to do this?
-    const arity = self.global_scope.locals.items.len;
+    const globals_count = self.globals_map.len;
 
-    var parser = Parser.init(&self.reporter, source);
-    var root = try parser.parse(self.allocator);
-    defer root.deinit(self.allocator);
-
-    var generator = codegen.Generator.init(self.allocator, &self.reporter, source);
-    var chunk = try generator.generateWithScope(&self.global_scope, root);
+    var compile_context = compile.Context{
+        .allocator = self.allocator,
+        .gc = &self.gc,
+        .string_pool = &self.string_pool,
+        .globals_map = &self.globals_map,
+    };
+    var chunk = try compile.compile(&compile_context, &source);
     defer chunk.deinit(self.allocator);
 
-    try self.fiber.pushFrame(&chunk, arity);
+    try self.fiber.pushFrame(&chunk, globals_count);
 
     while (true) {
         const inst = try self.fiber.step();

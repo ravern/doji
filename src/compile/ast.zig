@@ -1,5 +1,6 @@
 const std = @import("std");
-const Span = @import("Span.zig");
+const heap = @import("../heap.zig");
+const Source = @import("../Source.zig");
 
 pub const Token = struct {
     const Self = @This();
@@ -102,10 +103,10 @@ pub const Token = struct {
     };
 
     kind: Kind,
-    span: Span,
+    span: Source.Span,
 };
 
-pub const Root = struct {
+pub const Module = struct {
     const Self = @This();
 
     block: *Block,
@@ -130,9 +131,9 @@ pub const Block = struct {
 
     stmts: []Statement,
     ret_expr: ?*Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, stmts: []Statement, ret_expr: ?Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, stmts: []Statement, ret_expr: ?Expression, span: Source.Span) !Self {
         var self = Self{ .stmts = undefined, .ret_expr = null, .span = span };
         self.stmts = try allocator.dupe(Statement, stmts);
         if (ret_expr) |expr| {
@@ -170,7 +171,7 @@ pub const Statement = union(enum) {
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Self) Source.Span {
         return switch (self) {
             .expr => |expr| expr.span,
             .let => |let| let.span,
@@ -182,9 +183,9 @@ pub const ExpressionStatement = struct {
     const Self = @This();
 
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, expr: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, expr: Expression, span: Source.Span) !Self {
         var self = Self{ .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
@@ -204,9 +205,9 @@ pub const LetStatement = struct {
 
     pattern: Pattern,
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, pattern: Pattern, expr: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, pattern: Pattern, expr: Expression, span: Source.Span) !Self {
         var self = Self{ .pattern = pattern, .expr = undefined, .span = span };
 
         self.expr = try allocator.create(Expression);
@@ -227,9 +228,9 @@ pub const LetStatement = struct {
 pub const Expression = union(enum) {
     const Self = @This();
 
-    nil: Span,
-    true: Span,
-    false: Span,
+    nil: Source.Span,
+    true: Source.Span,
+    false: Source.Span,
     int: IntExpression,
     float: FloatExpression,
     identifier: Identifier,
@@ -248,7 +249,7 @@ pub const Expression = union(enum) {
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Self) Source.Span {
         return switch (self) {
             .nil => |span| span,
             .true => |span| span,
@@ -265,12 +266,12 @@ pub const Expression = union(enum) {
 
 pub const IntExpression = struct {
     int: i48,
-    span: Span,
+    span: Source.Span,
 };
 
 pub const FloatExpression = struct {
     float: f64,
-    span: Span,
+    span: Source.Span,
 };
 
 pub const UnaryExpression = struct {
@@ -293,9 +294,9 @@ pub const UnaryExpression = struct {
 
     op: Op,
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression, span: Source.Span) !Self {
         var self = UnaryExpression{ .op = op, .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
@@ -361,9 +362,9 @@ pub const BinaryExpression = struct {
     op: Op,
     left: *Expression,
     right: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression, span: Source.Span) !Self {
         var self = BinaryExpression{ .op = op, .left = undefined, .right = undefined, .span = span };
 
         self.left = try allocator.create(Expression);
@@ -392,13 +393,14 @@ pub const Pattern = union(enum) {
     identifier: Identifier,
 
     pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        _ = allocator;
         switch (self.*) {
-            .identifier => |*identifier| identifier.deinit(allocator),
+            else => {},
         }
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Self) Source.Span {
         return switch (self) {
             .identifier => |identifier| identifier.span,
         };
@@ -408,11 +410,6 @@ pub const Pattern = union(enum) {
 pub const Identifier = struct {
     const Self = @This();
 
-    identifier: []const u8,
-    span: Span,
-
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
-        allocator.free(self.identifier);
-        self.* = undefined;
-    }
+    identifier: *heap.String,
+    span: Source.Span,
 };
