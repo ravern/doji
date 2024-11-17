@@ -1,10 +1,8 @@
 const std = @import("std");
-const Span = @import("Span.zig");
+const Source = @import("Source.zig");
 
 pub const Token = struct {
-    const Self = @This();
-
-    pub const Kind = enum {
+    pub const Tag = enum {
         // literals
         int,
         float,
@@ -57,7 +55,7 @@ pub const Token = struct {
         identifier,
         eof,
 
-        pub fn toString(self: Kind) []const u8 {
+        pub fn toString(self: Tag) []const u8 {
             return switch (self) {
                 .plus => "'+'",
                 .plus_equal => "'+='",
@@ -101,24 +99,22 @@ pub const Token = struct {
         }
     };
 
-    kind: Kind,
-    span: Span,
+    tag: Tag,
+    span: Source.Span,
 };
 
 pub const Root = struct {
-    const Self = @This();
-
     block: *Block,
 
-    pub fn init(allocator: std.mem.Allocator, block: Block) !Self {
-        var self = Self{ .block = undefined };
+    pub fn init(allocator: std.mem.Allocator, block: Block) !Root {
+        var self = Root{ .block = undefined };
         self.block = try allocator.create(Block);
         errdefer allocator.destroy(self.block);
         self.block.* = block;
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Root, allocator: std.mem.Allocator) void {
         self.block.deinit(allocator);
         allocator.destroy(self.block);
         self.* = undefined;
@@ -126,14 +122,12 @@ pub const Root = struct {
 };
 
 pub const Block = struct {
-    const Self = @This();
-
     stmts: []Statement,
     ret_expr: ?*Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, stmts: []Statement, ret_expr: ?Expression, span: Span) !Self {
-        var self = Self{ .stmts = undefined, .ret_expr = null, .span = span };
+    pub fn init(allocator: std.mem.Allocator, stmts: []Statement, ret_expr: ?Expression, span: Source.Span) !Block {
+        var self = Block{ .stmts = undefined, .ret_expr = null, .span = span };
         self.stmts = try allocator.dupe(Statement, stmts);
         if (ret_expr) |expr| {
             self.ret_expr = try allocator.create(Expression);
@@ -143,7 +137,7 @@ pub const Block = struct {
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Block, allocator: std.mem.Allocator) void {
         for (self.stmts) |*stmt| {
             stmt.deinit(allocator);
         }
@@ -157,12 +151,10 @@ pub const Block = struct {
 };
 
 pub const Statement = union(enum) {
-    const Self = @This();
-
     expr: ExpressionStatement,
     let: LetStatement,
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Statement, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .expr => |*expr| expr.deinit(allocator),
             .let => |*let| let.deinit(allocator),
@@ -170,7 +162,7 @@ pub const Statement = union(enum) {
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Statement) Source.Span {
         return switch (self) {
             .expr => |expr| expr.span,
             .let => |let| let.span,
@@ -179,20 +171,18 @@ pub const Statement = union(enum) {
 };
 
 pub const ExpressionStatement = struct {
-    const Self = @This();
-
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, expr: Expression, span: Span) !Self {
-        var self = Self{ .expr = undefined, .span = span };
+    pub fn init(allocator: std.mem.Allocator, expr: Expression, span: Source.Span) !ExpressionStatement {
+        var self = ExpressionStatement{ .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
         self.expr.* = expr;
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *ExpressionStatement, allocator: std.mem.Allocator) void {
         self.expr.deinit(allocator);
         allocator.destroy(self.expr);
         self.* = undefined;
@@ -200,23 +190,19 @@ pub const ExpressionStatement = struct {
 };
 
 pub const LetStatement = struct {
-    const Self = @This();
-
     pattern: Pattern,
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, pattern: Pattern, expr: Expression, span: Span) !Self {
-        var self = Self{ .pattern = pattern, .expr = undefined, .span = span };
-
+    pub fn init(allocator: std.mem.Allocator, pattern: Pattern, expr: Expression, span: Source.Span) !LetStatement {
+        var self = LetStatement{ .pattern = pattern, .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
         self.expr.* = expr;
-
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *LetStatement, allocator: std.mem.Allocator) void {
         self.pattern.deinit(allocator);
         self.expr.deinit(allocator);
         allocator.destroy(self.expr);
@@ -225,11 +211,9 @@ pub const LetStatement = struct {
 };
 
 pub const Expression = union(enum) {
-    const Self = @This();
-
-    nil: Span,
-    true: Span,
-    false: Span,
+    nil: Source.Span,
+    true: Source.Span,
+    false: Source.Span,
     int: IntExpression,
     float: FloatExpression,
     identifier: Identifier,
@@ -237,7 +221,7 @@ pub const Expression = union(enum) {
     binary: BinaryExpression,
     block: Block,
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Expression, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .identifier => |*identifier| identifier.deinit(allocator),
             .unary => |*unary| unary.deinit(allocator),
@@ -248,7 +232,7 @@ pub const Expression = union(enum) {
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Expression) Source.Span {
         return switch (self) {
             .nil => |span| span,
             .true => |span| span,
@@ -265,24 +249,22 @@ pub const Expression = union(enum) {
 
 pub const IntExpression = struct {
     int: i48,
-    span: Span,
+    span: Source.Span,
 };
 
 pub const FloatExpression = struct {
     float: f64,
-    span: Span,
+    span: Source.Span,
 };
 
 pub const UnaryExpression = struct {
-    const Self = @This();
-
     pub const Op = enum {
         pos,
         neg,
         log_not,
 
-        pub fn fromTokenKind(kind: Token.Kind) Op {
-            return switch (kind) {
+        pub fn fromTokenTag(tag: Token.Tag) Op {
+            return switch (tag) {
                 .plus => .pos,
                 .minus => .neg,
                 .bang => .log_not,
@@ -293,9 +275,9 @@ pub const UnaryExpression = struct {
 
     op: Op,
     expr: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, op: Op, expr: Expression, span: Source.Span) !UnaryExpression {
         var self = UnaryExpression{ .op = op, .expr = undefined, .span = span };
         self.expr = try allocator.create(Expression);
         errdefer allocator.destroy(self.expr);
@@ -303,7 +285,7 @@ pub const UnaryExpression = struct {
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *UnaryExpression, allocator: std.mem.Allocator) void {
         self.expr.deinit(allocator);
         allocator.destroy(self.expr);
         self.* = undefined;
@@ -311,8 +293,6 @@ pub const UnaryExpression = struct {
 };
 
 pub const BinaryExpression = struct {
-    const Self = @This();
-
     pub const Op = enum {
         add,
         sub,
@@ -333,8 +313,8 @@ pub const BinaryExpression = struct {
         shl,
         shr,
 
-        pub fn fromTokenKind(kind: Token.Kind) Op {
-            return switch (kind) {
+        pub fn fromTokenTag(tag: Token.Tag) Op {
+            return switch (tag) {
                 .plus => .add,
                 .minus => .sub,
                 .asterisk => .mul,
@@ -361,9 +341,9 @@ pub const BinaryExpression = struct {
     op: Op,
     left: *Expression,
     right: *Expression,
-    span: Span,
+    span: Source.Span,
 
-    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression, span: Span) !Self {
+    pub fn init(allocator: std.mem.Allocator, op: Op, left: Expression, right: Expression, span: Source.Span) !BinaryExpression {
         var self = BinaryExpression{ .op = op, .left = undefined, .right = undefined, .span = span };
 
         self.left = try allocator.create(Expression);
@@ -377,7 +357,7 @@ pub const BinaryExpression = struct {
         return self;
     }
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *BinaryExpression, allocator: std.mem.Allocator) void {
         self.left.deinit(allocator);
         allocator.destroy(self.left);
         self.right.deinit(allocator);
@@ -387,18 +367,16 @@ pub const BinaryExpression = struct {
 };
 
 pub const Pattern = union(enum) {
-    const Self = @This();
-
     identifier: Identifier,
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Pattern, allocator: std.mem.Allocator) void {
         switch (self.*) {
             .identifier => |*identifier| identifier.deinit(allocator),
         }
         self.* = undefined;
     }
 
-    pub fn getSpan(self: Self) Span {
+    pub fn getSpan(self: Pattern) Source.Span {
         return switch (self) {
             .identifier => |identifier| identifier.span,
         };
@@ -406,12 +384,10 @@ pub const Pattern = union(enum) {
 };
 
 pub const Identifier = struct {
-    const Self = @This();
-
     identifier: []const u8,
-    span: Span,
+    span: Source.Span,
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Identifier, allocator: std.mem.Allocator) void {
         allocator.free(self.identifier);
         self.* = undefined;
     }

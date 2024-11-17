@@ -8,11 +8,11 @@ const q_nan: u64 = 0x7ffc000000000000;
 const mask_tag: u64 = 0x000000000000000003;
 const mask_payload: u64 = 0x0003fffffffffffffc;
 
-const tag_nil: usize = 0x0000000000000000;
-const tag_true: usize = 0x0000000000000001;
-const tag_false: usize = 0x0000000000000002;
-const tag_int: usize = 0x0000000000000003;
-const tag_object: usize = 0x8000000000000000;
+const tag_nil: u64 = 0x0000000000000000;
+const tag_true: u64 = 0x0000000000000001;
+const tag_false: u64 = 0x0000000000000002;
+const tag_int: u64 = 0x0000000000000003;
+const tag_object: u64 = 0x8000000000000000;
 
 pub const nil = Self{ .raw = q_nan | tag_nil };
 
@@ -147,7 +147,6 @@ fn intOrFloatBinaryOp(self: Self, other: Self, intOp: fn (i48, i48) Self, floatO
         return null;
     }
 }
-
 fn intBinaryOp(self: Self, other: Self, op: fn (i48, i48) Self) ?Self {
     if (self.isInt() and other.isInt()) {
         return op(self.toInt().?, other.toInt().?);
@@ -155,7 +154,6 @@ fn intBinaryOp(self: Self, other: Self, op: fn (i48, i48) Self) ?Self {
         return null;
     }
 }
-
 fn boolBinaryOp(self: Self, other: Self, op: fn (bool, bool) Self) ?Self {
     if (self.isBool() and other.isBool()) {
         return op(self.toBool().?, other.toBool().?);
@@ -163,7 +161,6 @@ fn boolBinaryOp(self: Self, other: Self, op: fn (bool, bool) Self) ?Self {
         return null;
     }
 }
-
 fn intOrFloatUnaryOp(self: Self, intOp: fn (i48) Self, floatOp: fn (f64) Self) ?Self {
     if (self.isInt()) {
         return intOp(self.toInt().?);
@@ -173,7 +170,6 @@ fn intOrFloatUnaryOp(self: Self, intOp: fn (i48) Self, floatOp: fn (f64) Self) ?
         return null;
     }
 }
-
 fn intUnaryOp(self: Self, op: fn (i48) Self) ?Self {
     if (self.isInt()) {
         return op(self.toInt().?);
@@ -181,7 +177,6 @@ fn intUnaryOp(self: Self, op: fn (i48) Self) ?Self {
         return null;
     }
 }
-
 fn boolUnaryOp(self: Self, op: fn (bool) Self) ?Self {
     if (self.isBool()) {
         return op(self.toBool().?);

@@ -27,7 +27,7 @@ pub fn main() !void {
         defer allocator.free(line);
 
         const source = doji.Source.initStdin(line);
-        const result = vm.eval(source) catch continue;
+        const result = vm.evaluate(source) catch continue;
         try out.print("{}\n", .{result});
     }
 }

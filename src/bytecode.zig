@@ -3,8 +3,6 @@ const Value = @import("Value.zig");
 const ast = @import("ast.zig");
 
 pub const Instruction = packed struct {
-    const Self = @This();
-
     pub const Op = enum(u8) {
         nil,
         true,
@@ -43,7 +41,7 @@ pub const Instruction = packed struct {
 
         ret,
 
-        pub fn fromUnaryOp(op: ast.UnaryExpression.Op) Self.Op {
+        pub fn fromUnaryOp(op: ast.UnaryExpression.Op) Op {
             return switch (op) {
                 .pos => .pos,
                 .neg => .neg,
@@ -51,7 +49,7 @@ pub const Instruction = packed struct {
             };
         }
 
-        pub fn fromBinaryOp(op: ast.BinaryExpression.Op) Self.Op {
+        pub fn fromBinaryOp(op: ast.BinaryExpression.Op) Op {
             return switch (op) {
                 .add => .add,
                 .sub => .sub,
@@ -82,29 +80,27 @@ pub const Instruction = packed struct {
 };
 
 pub const Chunk = struct {
-    const Self = @This();
-
     code: std.ArrayListUnmanaged(Instruction) = .{},
     constants: std.ArrayListUnmanaged(Value) = .{},
 
-    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+    pub fn deinit(self: *Chunk, allocator: std.mem.Allocator) void {
         self.code.deinit(allocator);
         self.constants.deinit(allocator);
     }
 
-    pub fn appendInst(self: *Self, allocator: std.mem.Allocator, op: Instruction.Op) !usize {
+    pub fn appendInstruction(self: *Chunk, allocator: std.mem.Allocator, op: Instruction.Op) !usize {
         const offset = self.code.items.len;
         try self.code.append(allocator, .{ .op = op, .arg = 0 });
         return offset;
     }
 
-    pub fn appendInstArg(self: *Self, allocator: std.mem.Allocator, op: Instruction.Op, arg: Instruction.Arg) !usize {
+    pub fn appendInstructionArg(self: *Chunk, allocator: std.mem.Allocator, op: Instruction.Op, arg: Instruction.Arg) !usize {
         const offset = self.code.items.len;
         try self.code.append(allocator, .{ .op = op, .arg = arg });
         return offset;
     }
 
-    pub fn appendConstant(self: *Self, allocator: std.mem.Allocator, value: Value) !usize {
+    pub fn appendConstant(self: *Chunk, allocator: std.mem.Allocator, value: Value) !usize {
         const index = self.constants.items.len;
         try self.constants.append(allocator, value);
         return index;

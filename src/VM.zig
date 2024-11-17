@@ -1,13 +1,11 @@
 const std = @import("std");
 const bytecode = @import("bytecode.zig");
-const codegen = @import("codegen.zig");
-const parse = @import("parse.zig");
-const Parser = parse.Parser;
-const Source = @import("Source.zig");
-const Span = @import("Span.zig");
-const Value = @import("Value.zig");
-const Reporter = @import("Reporter.zig");
+const compile = @import("compile.zig");
 const Fiber = @import("Fiber.zig");
+const GC = @import("GC.zig");
+const Report = @import("Report.zig");
+const Source = @import("Source.zig");
+const Value = @import("Value.zig");
 
 const Self = @This();
 
@@ -40,59 +38,67 @@ const binary_ops = std.EnumMap(bytecode.Instruction.Op, *const fn (Value, Value)
 });
 
 allocator: std.mem.Allocator,
-reporter: Reporter,
-fiber: *Fiber,
-global_scope: codegen.Scope,
+gc: *GC,
+report: Report,
+root_fiber: *Fiber,
+current_fiber: *Fiber,
+global_scope: []String = .{},
 
-pub fn init(allocator: std.mem.Allocator) !Self {
+pub fn init(allocator: std.mem.Allocator, gc: *GC) !Self {
     var self = Self{
         .allocator = allocator,
-        .reporter = Reporter.init(allocator),
-        .fiber = undefined,
-        .global_scope = codegen.Scope{},
+        .gc = gc,
+        .report = Report.init(allocator),
+        .root_fiber = undefined,
+        .current_fiber = undefined,
     };
 
-    self.fiber = try allocator.create(Fiber);
-    errdefer allocator.destroy(self.fiber);
-    self.fiber.* = Fiber.init(allocator);
+    self.root_fiber = try allocator.create(Fiber);
+    errdefer allocator.destroy(self.root_fiber);
+    self.root_fiber.* = Fiber.init(allocator);
+
+    self.current_fiber = self.root_fiber;
 
     return self;
 }
 
 pub fn deinit(self: *Self) void {
-    self.fiber.deinit();
-    self.allocator.destroy(self.fiber);
+    // FIXME: ordering might be wrong here, causing issues
+    self.gc.deinit();
+    self.report.deinit();
+    self.root_fiber.deinit();
+    self.allocator.destroy(self.root_fiber);
     self.global_scope.deinit(self.allocator);
     self.* = undefined;
 }
 
-pub fn eval(self: *Self, source: Source) !Value {
+pub fn evaluate(self: *Self, source: Source) !Value {
     // we need to offset by the number of locals in the global scope
     // conveniently, we can use the arity argument to do so
     // TODO: is this the cleanest way to do this?
     const arity = self.global_scope.locals.items.len;
 
-    var parser = Parser.init(&self.reporter, source);
-    var root = try parser.parse(self.allocator);
-    defer root.deinit(self.allocator);
-
-    var generator = codegen.Generator.init(self.allocator, &self.reporter, source);
-    var chunk = try generator.generateWithScope(&self.global_scope, root);
+    const chunk = try compile.compile(.{
+        .allocator = self.allocator,
+        .gc = &self.gc,
+        .report = &self.report,
+        .global_scope = &self.global_scope,
+    }, source);
     defer chunk.deinit(self.allocator);
 
     try self.fiber.pushFrame(&chunk, arity);
 
     while (true) {
-        const inst = try self.fiber.step();
+        const instruction = try self.fiber.step();
 
-        switch (inst.op) {
+        switch (instruction.op) {
             .nil => try self.fiber.push(Value.nil),
             .true => try self.fiber.push(Value.initBool(true)),
             .false => try self.fiber.push(Value.initBool(false)),
-            .int => try self.fiber.push(Value.initInt(@intCast(inst.arg))),
-            .constant => try self.fiber.push(chunk.constants.items[inst.arg]),
+            .int => try self.fiber.push(Value.initInt(@intCast(instruction.arg))),
+            .constant => try self.fiber.push(chunk.constants.items[instruction.arg]),
 
-            .local => try self.fiber.push(try self.fiber.getLocal(inst.arg)),
+            .local => try self.fiber.push(try self.fiber.getLocal(instruction.arg)),
 
             .pop => _ = try self.fiber.pop(),
 
@@ -102,7 +108,7 @@ pub fn eval(self: *Self, source: Source) !Value {
             .bit_not,
             => {
                 const value = try self.fiber.pop();
-                try self.fiber.push(unary_ops.get(inst.op).?(value).?);
+                try self.fiber.push(unary_ops.get(instruction.op).?(value).?);
             },
 
             .add,
@@ -127,7 +133,7 @@ pub fn eval(self: *Self, source: Source) !Value {
                 // FIXME: bunch of uncaught errors here
                 const right = try self.fiber.pop();
                 const left = try self.fiber.pop();
-                try self.fiber.push(binary_ops.get(inst.op).?(left, right).?);
+                try self.fiber.push(binary_ops.get(instruction.op).?(left, right).?);
             },
 
             .ret => {

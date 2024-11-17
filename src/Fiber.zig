@@ -55,7 +55,7 @@ pub fn getLocal(self: *Self, slot: usize) !Value {
 pub fn step(self: *Self) !bytecode.Instruction {
     var frame = &self.frames.items[self.frames.items.len - 1];
     if (frame.ip >= frame.chunk.code.items.len) return error.BytecodeCorrupted;
-    const inst = frame.chunk.code.items[frame.ip];
+    const instruction = frame.chunk.code.items[frame.ip];
     frame.ip += 1;
-    return inst;
+    return instruction;
 }

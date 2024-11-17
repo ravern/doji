@@ -1,29 +1,52 @@
 const std = @import("std");
-const Span = @import("Span.zig");
 
 const Self = @This();
 
-pub const Kind = union(enum) {
+pub const Path = union(enum) {
     stdin,
 };
 
-kind: Kind,
+pub const Location = struct {
+    offset: usize,
+    line: usize,
+    column: usize,
+
+    pub const zero = Location{ .offset = 0, .line = 1, .column = 1 };
+};
+
+pub const Span = struct {
+    pub const zero = Self{ .start = Location.zero, .end = Location.zero };
+
+    start: Location,
+    end: Location,
+
+    pub fn merge(self: Span, other: Span) Span {
+        const start = if (self.start.offset < other.start.offset) self.start else other.start;
+        const end = if (self.end.offset > other.end.offset) self.end else other.end;
+        return Span{ .start = start, .end = end };
+    }
+
+    pub fn getLength(self: Span) usize {
+        return self.end.offset - self.start.offset;
+    }
+};
+
+path: Path,
 content: []const u8,
 
-// Takes ownership of content.
 pub fn initStdin(content: []const u8) Self {
     return Self{
-        .kind = .stdin,
+        .tag = .stdin,
         .content = content,
     };
 }
 
-pub fn path(self: Self) []const u8 {
-    return switch (self.kind) {
+pub fn getPath(self: Self) []const u8 {
+    return switch (self.tag) {
         .stdin => "<stdin>",
     };
 }
 
-pub fn contentSlice(self: Self, span: Span) []const u8 {
-    return self.content[span.start_loc.offset..span.end_loc.offset];
+pub fn getContentSpan(self: Self, span: Span) []const u8 {
+    return self.content[span.start.offset..span.end.offset];
 }
