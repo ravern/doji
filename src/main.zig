@@ -34,6 +34,7 @@ pub fn main() !void {
         defer allocator.free(line);
 
         const input = doji.Input{ .source = .stdin, .content = line };
-        _ = try vm.evaluate(&input);
+        const result = try vm.evaluate(&input);
+        try out.print("{d}\n", .{result.raw});
     }
 }
