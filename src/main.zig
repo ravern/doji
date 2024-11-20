@@ -10,9 +10,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var gc = doji.GC.init(allocator);
-    defer gc.deinit();
-    var vm = try doji.VM.init(allocator, &gc);
+    var vm = try doji.VM.init(allocator);
     defer vm.deinit();
 
     const in = std.io.getStdIn().reader();
@@ -34,6 +32,7 @@ pub fn main() !void {
         defer allocator.free(line);
 
         const input = doji.Input{ .source = .stdin, .content = line };
-        _ = try vm.evaluate(&input);
+        const result = try vm.evaluate(&input);
+        try out.print("{d}\n", .{result.raw});
     }
 }

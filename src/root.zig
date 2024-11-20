@@ -10,6 +10,7 @@ pub const VM = vm.VM;
 pub const value = @import("value.zig");
 pub const Value = value.Value;
 
-test chunk {
+test {
     std.testing.refAllDecls(chunk);
+    std.testing.refAllDecls(gc);
 }
