@@ -8,6 +8,19 @@ pub const Chunk = struct {
 
 pub const Op = enum(u8) {
     nop,
+    ret,
+
+    nil,
+    true,
+    false,
+    int,
+    constant,
+
+    add,
+    sub,
+    mul,
+    div,
+    rem,
 };
 
 pub const Instruction = packed struct {
@@ -26,5 +39,5 @@ pub const Constant = union(enum) {
 
 pub const Function = struct {
     arity: u8,
-    chunk: *Chunk,
+    chunk: *const Chunk,
 };
