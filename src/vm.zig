@@ -31,8 +31,10 @@ pub const VM = struct {
         return .{
             .ptr = self,
             .vtable = &.{
-                .trace = traceObject,
-                .finalize = finalizeObject,
+                .mark_roots = markRoots,
+                .size_of_object = sizeOfObject,
+                .trace_object = traceObject,
+                .finalize_object = finalizeObject,
             },
         };
     }
@@ -93,7 +95,20 @@ pub const VM = struct {
         return result;
     }
 
-    fn traceObject(ctx: *anyopaque, gc: *GC, tracer: *Tracer, ptr: *anyopaque) void {
+    fn sizeOfObject(ctx: *anyopaque, ptr: *anyopaque) usize {
+        _ = ctx;
+        _ = ptr;
+        return @sizeOf(Fiber);
+    }
+
+    fn markRoots(ctx: *anyopaque, gc: *GC, tracer: *Tracer) void {
+        _ = ctx;
+        _ = gc;
+        _ = tracer;
+        unreachable;
+    }
+
+    fn traceObject(ctx: *anyopaque, ptr: *anyopaque, gc: *GC, tracer: *Tracer) void {
         _ = ctx;
         _ = gc;
         _ = tracer;
@@ -101,9 +116,8 @@ pub const VM = struct {
         unreachable;
     }
 
-    fn finalizeObject(ctx: *anyopaque, gc: *GC, ptr: *anyopaque) void {
+    fn finalizeObject(ctx: *anyopaque, ptr: *anyopaque) void {
         const self: *VM = @ptrCast(@alignCast(ctx));
-        _ = gc;
 
         const fiber = @as(*Fiber, @ptrCast(@alignCast(ptr)));
         fiber.deinit(self.allocator);
