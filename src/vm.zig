@@ -3,8 +3,6 @@ const Chunk = @import("chunk.zig").Chunk;
 const Instruction = @import("chunk.zig").Instruction;
 const Constant = @import("chunk.zig").Constant;
 const GC = @import("gc.zig").GC;
-const Mutator = @import("gc.zig").Mutator;
-const Tracer = @import("gc.zig").Tracer;
 const Input = @import("input.zig").Input;
 const Value = @import("value.zig").Value;
 
@@ -22,37 +20,21 @@ const stack_init_size = 1024;
 
 pub const VM = struct {
     allocator: std.mem.Allocator,
-    gc_allocator: std.mem.Allocator,
     gc: GC,
     root_fiber: *Fiber,
     current_fiber: *Fiber,
 
-    fn mutator(self: *VM) Mutator {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .trace = traceObject,
-                .finalize = finalizeObject,
-            },
-        };
-    }
-
-    pub fn init(allocator: std.mem.Allocator) !*VM {
-        var self = try allocator.create(VM);
-        self.* = .{
+    pub fn init(allocator: std.mem.Allocator) !VM {
+        var self = VM{
             .allocator = allocator,
-            .gc_allocator = undefined,
-            .gc = undefined,
+            .gc = GC.init(allocator),
             .root_fiber = undefined,
             .current_fiber = undefined,
         };
 
-        self.gc = GC.init(allocator, self.mutator());
-
-        self.gc_allocator = self.gc.allocator();
-
-        self.root_fiber = try self.gc_allocator.create(Fiber);
+        self.root_fiber = try self.gc.create(Fiber);
         self.root_fiber.* = try Fiber.init(self.allocator);
+        self.gc.root(self.root_fiber);
 
         self.current_fiber = self.root_fiber;
 
@@ -61,7 +43,7 @@ pub const VM = struct {
 
     pub fn deinit(self: *VM) void {
         self.gc.deinit();
-        self.allocator.destroy(self);
+        self.* = undefined;
     }
 
     pub fn evaluate(self: *VM, input: *const Input) !Value {
@@ -91,22 +73,6 @@ pub const VM = struct {
 
         try self.current_fiber.popFrame();
         return result;
-    }
-
-    fn traceObject(ctx: *anyopaque, gc: *GC, tracer: *Tracer, ptr: *anyopaque) void {
-        _ = ctx;
-        _ = gc;
-        _ = tracer;
-        _ = ptr;
-        unreachable;
-    }
-
-    fn finalizeObject(ctx: *anyopaque, gc: *GC, ptr: *anyopaque) void {
-        const self: *VM = @ptrCast(@alignCast(ctx));
-        _ = gc;
-
-        const fiber = @as(*Fiber, @ptrCast(@alignCast(ptr)));
-        fiber.deinit(self.allocator);
     }
 };
 
