@@ -60,6 +60,7 @@ pub const GC = struct {
 
         while (self.gray_set.popOrNull()) |node| {
             try self.blacken(node); // might push more nodes into gray_set
+
         }
 
         self.sweep();
@@ -79,13 +80,15 @@ pub const GC = struct {
 
         // except the first node, remove all the white nodes and add them to the white set
         var curr_node = self.objects.first;
-        while (curr_node) |node| : (curr_node = node.next) {
+        while (curr_node) |node| {
             if (node.next) |next_node| {
                 if (next_node.data.color == self.color_white) {
-                    const removed_node = node.removeNext() orelse unreachable;
+                    const removed_node = node.removeNext().?;
                     white_set.prepend(removed_node);
+                    continue;
                 }
             }
+            curr_node = node.next;
         }
 
         // now remove the first node if necessary
@@ -96,7 +99,7 @@ pub const GC = struct {
             }
         }
 
-        // now we have to finalize all the white nodes with a depth-first search
+        // now we finalize and destroy all the white nodes
         curr_node = white_set.first;
         while (curr_node) |node| : (curr_node = node.next) {
             self.mutator.vtable.finalize_object(self.mutator.ptr, getPtr(node));
@@ -213,38 +216,53 @@ const Object = packed struct {
 
 test GC {
     const TestResult = struct {
-        freed_object_count: usize = 0,
+        freed_objects: std.StringHashMap(void),
 
         const Self = @This();
 
-        fn incrementFreedObjectCount(self: *Self) void {
-            self.freed_object_count += 1;
+        fn init(allocator: std.mem.Allocator) Self {
+            return Self{ .freed_objects = std.StringHashMap(void).init(allocator) };
+        }
+
+        fn deinit(self: *Self) void {
+            self.freed_objects.deinit();
+        }
+
+        fn isEmpty(self: *Self) bool {
+            return self.freed_objects.count() == 0;
+        }
+
+        fn hasFreedObject(self: *Self, key: []const u8) bool {
+            return self.freed_objects.contains(key);
+        }
+
+        fn putFreedObject(self: *Self, key: []const u8) void {
+            self.freed_objects.put(key, {}) catch unreachable;
         }
     };
 
     const TestObject = struct {
         result: *TestResult,
-        value: usize,
+        key: []const u8,
         refs: std.StringHashMap(*Self),
 
         const Self = @This();
 
-        fn init(allocator: std.mem.Allocator, value: usize, result: *TestResult) Self {
-            return Self{ .result = result, .value = value, .refs = std.StringHashMap(*Self).init(allocator) };
+        fn init(allocator: std.mem.Allocator, key: []const u8, result: *TestResult) Self {
+            return Self{ .result = result, .key = key, .refs = std.StringHashMap(*Self).init(allocator) };
         }
 
         fn deinit(self: *Self) void {
-            std.debug.print("goodbye, i'm number {d}\n", .{self.value});
-            self.result.incrementFreedObjectCount();
+            self.result.putFreedObject(self.key);
             self.refs.deinit();
         }
 
-        fn addRef(self: *Self, key: []const u8, value: *Self) !void {
-            try self.refs.put(key, value);
+        fn addRef(self: *Self, child_object: *Self) !void {
+            try self.refs.put(child_object.key, child_object);
         }
 
-        fn removeRef(self: *Self, key: []const u8) void {
-            _ = self.refs.remove(key);
+        fn removeRef(self: *Self, child_object: *Self) void {
+            _ = self.refs.remove(child_object.key);
         }
     };
 
@@ -277,7 +295,7 @@ test GC {
             self.gc_allocator = self.gc.allocator();
 
             self.root_object = try self.gc_allocator.create(TestObject);
-            self.root_object.* = TestObject.init(self.allocator, 0, result);
+            self.root_object.* = TestObject.init(self.allocator, "__root__", result);
 
             return self;
         }
@@ -318,26 +336,101 @@ test GC {
         }
     };
 
-    var result = TestResult{};
+    var result = TestResult.init(std.testing.allocator);
+    defer result.deinit();
 
     var mutator = try TestMutator.init(std.testing.allocator, &result);
     defer mutator.deinit();
 
-    const foo_object = try mutator.gc_allocator.create(TestObject);
-    foo_object.* = TestObject.init(mutator.allocator, 1, &result);
-    const bar_object = try mutator.gc_allocator.create(TestObject);
-    bar_object.* = TestObject.init(mutator.allocator, 2, &result);
+    // basic example
 
-    try mutator.root_object.addRef("foo", foo_object);
-    try mutator.root_object.addRef("bar", bar_object);
+    const basic_1_object = try mutator.gc_allocator.create(TestObject);
+    basic_1_object.* = TestObject.init(mutator.allocator, "basic_1", &result);
+    const basic_2_object = try mutator.gc_allocator.create(TestObject);
+    basic_2_object.* = TestObject.init(mutator.allocator, "basic_2", &result);
 
+    try mutator.root_object.addRef(basic_1_object);
+    try mutator.root_object.addRef(basic_2_object);
     try mutator.gc.collect();
+    try std.testing.expect(!result.hasFreedObject("basic_1"));
+    try std.testing.expect(!result.hasFreedObject("basic_2"));
 
-    try std.testing.expectEqual(0, result.freed_object_count);
-
-    mutator.root_object.removeRef("foo");
-
+    mutator.root_object.removeRef(basic_1_object);
     try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("basic_1"));
+    try std.testing.expect(!result.hasFreedObject("basic_2"));
 
-    try std.testing.expectEqual(1, result.freed_object_count);
+    mutator.root_object.removeRef(basic_2_object);
+    try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("basic_1"));
+    try std.testing.expect(result.hasFreedObject("basic_2"));
+
+    // multiple layers
+
+    const layers_1_object = try mutator.gc_allocator.create(TestObject);
+    layers_1_object.* = TestObject.init(mutator.allocator, "layers_1", &result);
+    const layers_2_object = try mutator.gc_allocator.create(TestObject);
+    layers_2_object.* = TestObject.init(mutator.allocator, "layers_2", &result);
+    const layers_3_object = try mutator.gc_allocator.create(TestObject);
+    layers_3_object.* = TestObject.init(mutator.allocator, "layers_3", &result);
+    const layers_4_object = try mutator.gc_allocator.create(TestObject);
+    layers_4_object.* = TestObject.init(mutator.allocator, "layers_4", &result);
+    const layers_5_object = try mutator.gc_allocator.create(TestObject);
+    layers_5_object.* = TestObject.init(mutator.allocator, "layers_5", &result);
+
+    try mutator.root_object.addRef(layers_1_object);
+    try mutator.root_object.addRef(layers_2_object);
+    try layers_2_object.addRef(layers_3_object);
+    try layers_2_object.addRef(layers_4_object);
+    try layers_3_object.addRef(layers_5_object);
+    try mutator.gc.collect();
+    try std.testing.expect(!result.hasFreedObject("layers_1"));
+    try std.testing.expect(!result.hasFreedObject("layers_2"));
+    try std.testing.expect(!result.hasFreedObject("layers_3"));
+    try std.testing.expect(!result.hasFreedObject("layers_4"));
+    try std.testing.expect(!result.hasFreedObject("layers_5"));
+
+    mutator.root_object.removeRef(layers_1_object);
+    try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("layers_1"));
+    try std.testing.expect(!result.hasFreedObject("layers_2"));
+    try std.testing.expect(!result.hasFreedObject("layers_3"));
+    try std.testing.expect(!result.hasFreedObject("layers_4"));
+    try std.testing.expect(!result.hasFreedObject("layers_5"));
+
+    mutator.root_object.removeRef(layers_2_object);
+    try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("layers_1"));
+    try std.testing.expect(result.hasFreedObject("layers_2"));
+    try std.testing.expect(result.hasFreedObject("layers_3"));
+    try std.testing.expect(result.hasFreedObject("layers_4"));
+    try std.testing.expect(result.hasFreedObject("layers_5"));
+
+    // circular references
+
+    const circular_1_object = try mutator.gc_allocator.create(TestObject);
+    circular_1_object.* = TestObject.init(mutator.allocator, "circular_1", &result);
+    const circular_2_object = try mutator.gc_allocator.create(TestObject);
+    circular_2_object.* = TestObject.init(mutator.allocator, "circular_2", &result);
+
+    try mutator.root_object.addRef(circular_1_object);
+    try circular_1_object.addRef(circular_2_object);
+    try circular_2_object.addRef(circular_1_object);
+    try mutator.gc.collect();
+    try std.testing.expect(!result.hasFreedObject("circular_1"));
+    try std.testing.expect(!result.hasFreedObject("circular_2"));
+
+    mutator.root_object.removeRef(circular_1_object);
+    try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("circular_1"));
+    try std.testing.expect(result.hasFreedObject("circular_2"));
+
+    // pointing to root
+
+    const point_root_object = try mutator.gc_allocator.create(TestObject);
+    point_root_object.* = TestObject.init(mutator.allocator, "point_root", &result);
+
+    try point_root_object.addRef(mutator.root_object);
+    try mutator.gc.collect();
+    try std.testing.expect(result.hasFreedObject("point_root"));
 }
