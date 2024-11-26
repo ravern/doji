@@ -4,17 +4,22 @@ pub const GC = struct {
     child_allocator: std.mem.Allocator,
     mutator: Mutator,
     objects: ObjectList,
-    gray_set: std.ArrayList(*ObjectNode),
+    gray_set: std.ArrayList(*Object),
 
-    // these colors swap after each collection cycle, so that we don't have to traverse the entire object graph again
-    // to change all the colors back from black to white.
-    color_white: u2 = 0,
-    color_black: u2 = 1,
+    // white and black colors swap after each collection cycle, so that we don't have to traverse the entire object
+    // graph again to change all the colors back from black (objects that aren't swept) back to white for the next
+    // traversal.
+    colors: struct {
+        white: u8 = 0,
+        black: u8 = 1,
+        gray: u8 = 2,
 
-    const color_gray = 2;
-
-    const ObjectList = std.SinglyLinkedList(Object);
-    const ObjectNode = ObjectList.Node;
+        fn swapWhiteAndBlack(self: *@This()) void {
+            const tmp = self.white;
+            self.white = self.black;
+            self.black = tmp;
+        }
+    },
 
     pub fn allocator(self: *GC) std.mem.Allocator {
         return .{
@@ -32,96 +37,102 @@ pub const GC = struct {
             .child_allocator = child_allocator,
             .mutator = mutator,
             .objects = .{},
-            .gray_set = std.ArrayList(*ObjectNode).init(child_allocator),
+            .gray_set = std.ArrayList(*Object).init(child_allocator),
+            .colors = .{},
         };
     }
 
     pub fn deinit(self: *GC) void {
-        var curr_node = self.objects.first;
-        while (curr_node) |node| : (curr_node = node.next) {
-            self.mutator.vtable.finalize_object(self.mutator.ptr, getPtr(node));
+        var curr_object = self.objects.first;
+        while (curr_object) |object| : (curr_object = object.getNext()) {
+            self.mutator.vtable.finalize_object(self.mutator.ptr, getPtr(object));
         }
-        while (self.objects.popFirst()) |node| {
-            self.destroyObjectNode(node, @returnAddress());
+        while (self.objects.popFirst()) |object| {
+            self.destroyObject(object, @returnAddress());
         }
         self.gray_set.deinit();
         self.* = undefined;
     }
 
     pub fn mark(self: *GC, ptr: anytype) !void {
-        const node = getObjectNode(ptr);
-        if (node.data.color == self.color_black) return;
-        node.data.color = color_gray;
-        try self.gray_set.append(node);
+        const object = getObject(ptr);
+
+        // don't re-gray an already black object
+        if (object.color == self.colors.black) return;
+
+        // mark the object as gray and add it to the gray set
+        object.color = self.colors.gray;
+        try self.gray_set.append(object);
     }
 
     pub fn collect(self: *GC) !void {
+        // request the mutator to mark all the roots
         try self.mutator.vtable.mark_roots(self.mutator.ptr, self);
 
-        while (self.gray_set.popOrNull()) |node| {
-            try self.blacken(node); // might push more nodes into gray_set
-
+        // blacken all the gray objects
+        while (self.gray_set.popOrNull()) |object| {
+            try self.blacken(object);
         }
 
+        // sweep all the white objects
         self.sweep();
 
-        self.swapColors();
+        // swap the white and black colors in preparation for the next collection cycle
+        self.colors.swapWhiteAndBlack();
     }
 
-    fn blacken(self: *GC, node: *ObjectNode) !void {
+    fn blacken(self: *GC, object: *Object) !void {
         var tracer = Tracer{ .action = .mark };
-        const ptr = getPtr(node);
+
+        // request the mutator to trace all the objects reachable from the given object
+        const ptr = getPtr(object);
         try self.mutator.vtable.trace_object(self.mutator.ptr, ptr, self, &tracer);
-        node.data.color = self.color_black;
+
+        // mark the object as black
+        object.color = self.colors.black;
     }
 
     fn sweep(self: *GC) void {
         var white_set = ObjectList{};
 
-        // except the first node, remove all the white nodes and add them to the white set
-        var curr_node = self.objects.first;
-        while (curr_node) |node| {
-            if (node.next) |next_node| {
-                if (next_node.data.color == self.color_white) {
-                    const removed_node = node.removeNext().?;
-                    white_set.prepend(removed_node);
+        // except the first object, remove all the white objects and add them to the white set
+        var curr_object = self.objects.first;
+        while (curr_object) |object| {
+            if (object.getNext()) |next_object| {
+                if (next_object.color == self.colors.white) {
+                    const removed_object = object.removeNext().?;
+                    white_set.prepend(removed_object);
                     continue;
                 }
             }
-            curr_node = node.next;
+            curr_object = object.getNext();
         }
 
-        // now remove the first node if necessary
-        if (self.objects.first) |first_node| {
-            if (first_node.data.color == self.color_white) {
+        // now remove the first object if necessary
+        if (self.objects.first) |first_object| {
+            if (first_object.color == self.colors.white) {
                 _ = self.objects.popFirst();
-                white_set.prepend(first_node);
+                white_set.prepend(first_object);
             }
         }
 
-        // now we finalize and destroy all the white nodes
-        curr_node = white_set.first;
-        while (curr_node) |node| : (curr_node = node.next) {
-            self.mutator.vtable.finalize_object(self.mutator.ptr, getPtr(node));
+        // now we finalize and destroy all the white objects
+        curr_object = white_set.first;
+        while (curr_object) |object| : (curr_object = object.getNext()) {
+            self.mutator.vtable.finalize_object(self.mutator.ptr, getPtr(object));
         }
-        while (white_set.popFirst()) |node| {
-            self.destroyObjectNode(node, @returnAddress());
+        while (white_set.popFirst()) |object| {
+            self.destroyObject(object, @returnAddress());
         }
-    }
-
-    fn swapColors(self: *GC) void {
-        const tmp = self.color_white;
-        self.color_white = self.color_black;
-        self.color_black = tmp;
     }
 
     fn alloc(ctx: *anyopaque, len: usize, log2_ptr_align: u8, ret_addr: usize) ?[*]u8 {
         const self: *GC = @ptrCast(@alignCast(ctx));
 
-        const node = self.createObjectNode(len, log2_ptr_align, ret_addr) orelse return null;
-        self.objects.prepend(node);
+        const object = self.createObject(len, log2_ptr_align, ret_addr) orelse return null;
+        self.objects.prepend(object);
 
-        return @ptrCast(getPtr(node));
+        return @ptrCast(getPtr(object));
     }
 
     fn resize(ctx: *anyopaque, buf: []u8, log2_buf_align: u8, new_len: usize, ret_addr: usize) bool {
@@ -133,39 +144,34 @@ pub const GC = struct {
         unreachable;
     }
 
-    fn createObjectNode(self: *GC, len: usize, log2_ptr_align: u8, ret_addr: usize) ?*ObjectNode {
+    fn createObject(self: *GC, len: usize, log2_ptr_align: u8, ret_addr: usize) ?*Object {
         const info = calculatePtrInfo(log2_ptr_align);
-        const full_len = info.node_len + len;
+        const full_len = info.object_len + len;
         const raw_ptr = self.child_allocator.rawAlloc(full_len, info.log2_ptr_align, ret_addr) orelse return null;
-        const node = @as(*ObjectNode, @ptrCast(@alignCast(raw_ptr)));
-        node.* = .{
-            .data = .{
-                .color = self.color_white,
-                .log2_ptr_align = @intCast(log2_ptr_align),
-            },
-        };
-        return node;
+        const object = @as(*Object, @ptrCast(@alignCast(raw_ptr)));
+        object.* = Object.init(self.colors.white, log2_ptr_align);
+        return object;
     }
 
-    fn destroyObjectNode(self: *GC, node: *ObjectNode, ret_addr: usize) void {
-        const info = calculatePtrInfo(node.data.log2_ptr_align);
-        const raw_ptr = @as([*]u8, @ptrCast(node));
-        const ptr = @as(*anyopaque, @ptrCast(raw_ptr + info.node_len));
-        const full_len = info.node_len + self.mutator.vtable.size_of_object(self.mutator.ptr, ptr);
+    fn destroyObject(self: *GC, object: *Object, ret_addr: usize) void {
+        const info = calculatePtrInfo(object.log2_ptr_align);
+        const raw_ptr = @as([*]u8, @ptrCast(object));
+        const ptr = @as(*anyopaque, @ptrCast(raw_ptr + info.object_len));
+        const full_len = info.object_len + self.mutator.vtable.size_of_object(self.mutator.ptr, ptr);
         self.child_allocator.rawFree(raw_ptr[0..full_len], info.log2_ptr_align, ret_addr);
     }
 
-    inline fn getObjectNode(ptr: anytype) *ObjectNode {
+    inline fn getObject(ptr: anytype) *Object {
         const log2_ptr_align = std.math.log2_int(usize, @alignOf(@TypeOf(ptr)));
         const info = calculatePtrInfo(log2_ptr_align);
         const raw_ptr = @as([*]u8, @ptrCast(ptr));
-        return @as(*ObjectNode, @ptrCast(@alignCast(raw_ptr - info.node_len)));
+        return @as(*Object, @ptrCast(@alignCast(raw_ptr - info.object_len)));
     }
 
-    inline fn getPtr(node: *ObjectNode) *anyopaque {
-        const info = calculatePtrInfo(node.data.log2_ptr_align);
-        const raw_ptr = @as([*]u8, @ptrCast(node));
-        return @ptrCast(raw_ptr + info.node_len);
+    inline fn getPtr(object: *Object) *anyopaque {
+        const info = calculatePtrInfo(object.log2_ptr_align);
+        const raw_ptr = @as([*]u8, @ptrCast(object));
+        return @ptrCast(raw_ptr + info.object_len);
     }
 
     // From the given [log2_ptr_align], and taking into account the alignment of the [ObjectNode], calculate all
@@ -173,13 +179,13 @@ pub const GC = struct {
     inline fn calculatePtrInfo(log2_ptr_align: u8) struct {
         log2_ptr_align: u8,
         ptr_align: usize,
-        node_len: usize,
+        object_len: usize,
     } {
         const ptr_align = @as(usize, 1) << @as(std.mem.Allocator.Log2Align, @intCast(log2_ptr_align));
-        const actual_ptr_align = @max(@alignOf(ObjectNode), ptr_align);
+        const actual_ptr_align = @max(@alignOf(Object), ptr_align);
         const actual_log2_ptr_align = std.math.log2_int(usize, actual_ptr_align);
-        const node_len = std.mem.alignForward(usize, @sizeOf(ObjectNode), actual_ptr_align);
-        return .{ .ptr_align = actual_ptr_align, .log2_ptr_align = actual_log2_ptr_align, .node_len = node_len };
+        const object_len = std.mem.alignForward(usize, @sizeOf(Object), actual_ptr_align);
+        return .{ .ptr_align = actual_ptr_align, .log2_ptr_align = actual_log2_ptr_align, .object_len = object_len };
     }
 };
 
@@ -209,9 +215,52 @@ pub const Tracer = struct {
     }
 };
 
+const ObjectList = struct {
+    first: ?*Object = null,
+
+    fn popFirst(self: *ObjectList) ?*Object {
+        const object = self.first orelse return null;
+        self.first = object.getNext();
+        return object;
+    }
+
+    fn prepend(self: *ObjectList, object: *Object) void {
+        object.setNext(self.first);
+        self.first = object;
+    }
+};
+
 const Object = packed struct {
-    color: u2,
-    log2_ptr_align: u6,
+    color: u8,
+    log2_ptr_align: u8,
+    // FIXME: assumes that pointers take 48-bits
+    next_ptr: u48,
+
+    fn init(color: u8, log2_ptr_align: u8) Object {
+        return Object.initNext(color, log2_ptr_align, null);
+    }
+
+    fn initNext(color: u8, log2_ptr_align: u8, next: ?*Object) Object {
+        return Object{
+            .color = color,
+            .log2_ptr_align = log2_ptr_align,
+            .next_ptr = @intCast(@intFromPtr(next)),
+        };
+    }
+
+    fn removeNext(self: *Object) ?*Object {
+        const next = self.getNext() orelse return null;
+        self.setNext(next.getNext());
+        return next;
+    }
+
+    fn setNext(self: *Object, next: ?*Object) void {
+        self.next_ptr = @intCast(@intFromPtr(next));
+    }
+
+    fn getNext(self: *const Object) ?*Object {
+        return @ptrFromInt(self.next_ptr);
+    }
 };
 
 test GC {
@@ -226,10 +275,6 @@ test GC {
 
         fn deinit(self: *Self) void {
             self.freed_objects.deinit();
-        }
-
-        fn isEmpty(self: *Self) bool {
-            return self.freed_objects.count() == 0;
         }
 
         fn hasFreedObject(self: *Self, key: []const u8) bool {

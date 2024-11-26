@@ -40,6 +40,8 @@ pub const VM = struct {
     }
 
     pub fn init(allocator: std.mem.Allocator) !*VM {
+        // we have to allocate the VM struct itself on the heap, because we need to pass a pointer to it to the GC,
+        // but returning the VM struct from this function would invalidate the pointer.
         var self = try allocator.create(VM);
         self.* = .{
             .allocator = allocator,
