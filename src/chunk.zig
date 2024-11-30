@@ -8,6 +8,12 @@ pub const Chunk = struct {
 
 pub const Op = enum(u8) {
     nop,
+
+    int,
+
+    add,
+
+    ret,
 };
 
 pub const Instruction = packed struct {
