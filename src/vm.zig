@@ -1,20 +1,21 @@
 const std = @import("std");
 const Chunk = @import("chunk.zig").Chunk;
 const Instruction = @import("chunk.zig").Instruction;
-const Constant = @import("chunk.zig").Constant;
 const GC = @import("gc.zig").GC;
 const Input = @import("input.zig").Input;
 const Value = @import("value.zig").Value;
 const List = @import("value.zig").List;
 
 const demo_chunk = Chunk{
+    .arity = 0,
     .code = &[_]Instruction{
         .{ .op = .int, .arg = 2 },
         .{ .op = .int, .arg = 3 },
-        .{ .op = .add, .arg = 0 },
+        .{ .op = .sub, .arg = 0 },
         .{ .op = .ret, .arg = 0 },
     },
-    .constants = &[_]Constant{},
+    .constants = &[_]Value{},
+    .chunks = &[_]*Chunk{},
 };
 
 const stack_init_size = 1024;
@@ -47,6 +48,10 @@ pub const VM = struct {
         self.allocator.destroy(self);
     }
 
+    pub fn markRoots(self: *VM) !void {
+        try self.gc.mark(self.curr_fiber);
+    }
+
     pub fn evaluate(self: *VM, input: *const Input) !Value {
         // TODO: compile the chunk
         _ = input;
@@ -58,12 +63,14 @@ pub const VM = struct {
         while (true) {
             const instruction = try self.curr_fiber.advance();
             switch (instruction.op) {
+                .nil => try self.curr_fiber.push(self.allocator, Value.nil),
+                .true => try self.curr_fiber.push(self.allocator, Value.init(true)),
+                .false => try self.curr_fiber.push(self.allocator, Value.init(false)),
                 .int => try self.curr_fiber.push(self.allocator, Value.init(@as(i48, @intCast(instruction.arg)))),
-                .add => {
-                    const right = (try self.curr_fiber.pop()).cast(i48).?;
-                    const left = (try self.curr_fiber.pop()).cast(i48).?;
-                    try self.curr_fiber.push(self.allocator, Value.init(left + right));
-                },
+                .add => try self.binary(Value.add),
+                .sub => try self.binary(Value.sub),
+                .mul => try self.binary(Value.mul),
+                .div => try self.binary(Value.div),
                 .ret => {
                     result = try self.curr_fiber.pop();
                     break;
@@ -78,8 +85,10 @@ pub const VM = struct {
         return result;
     }
 
-    pub fn markRoots(self: *VM) !void {
-        try self.gc.mark(self.curr_fiber);
+    fn binary(self: *VM, op: fn (Value, Value) ?Value) !void {
+        const right = try self.curr_fiber.pop();
+        const left = try self.curr_fiber.pop();
+        try self.curr_fiber.push(self.allocator, op(left, right).?); // TODO: remove unwrap
     }
 };
 

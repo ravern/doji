@@ -1,6 +1,7 @@
 const std = @import("std");
 const VM = @import("vm.zig").VM;
 const Fiber = @import("vm.zig").Fiber;
+const Chunk = @import("chunk.zig").Chunk;
 const value = @import("value.zig");
 
 pub const GC = struct {
@@ -47,6 +48,7 @@ pub const GC = struct {
     }
 
     pub fn mark(self: *GC, ptr: *anyopaque) !void {
+        // TODO: pretty weak guarantees here, one could pass any pointer and [Object.fromPtr] would be called, causing UB
         const object = Object.fromPtr(ptr);
         if (object.header.color == self.colors.gray) return;
         try self.gray_set.append(self.allocator, object);
@@ -126,9 +128,13 @@ const Object = struct {
     data: Data,
 
     const Tag = enum(u8) {
-        fiber,
+        string,
         list,
         map,
+        chunk,
+        upvalue,
+        closure,
+        fiber,
     };
 
     const Header = packed struct {
@@ -138,15 +144,23 @@ const Object = struct {
     };
 
     const Data = union {
-        fiber: Fiber,
+        string: value.String,
         list: value.List,
         map: value.Map,
+        chunk: Chunk,
+        upvalue: value.Upvalue,
+        closure: value.Closure,
+        fiber: Fiber,
 
         fn deinit(self: *Data, tag: Tag, allocator: std.mem.Allocator) void {
             switch (tag) {
-                .fiber => self.fiber.deinit(allocator),
+                .string => self.string.deinit(allocator),
                 .list => self.list.deinit(allocator),
                 .map => self.map.deinit(allocator),
+                .chunk => self.chunk.deinit(allocator),
+                .upvalue => {},
+                .closure => self.closure.deinit(allocator),
+                .fiber => self.fiber.deinit(allocator),
             }
             self.* = undefined;
         }
@@ -157,16 +171,24 @@ const Object = struct {
             .header = .{
                 .color = color,
                 .tag = switch (T) {
-                    Fiber => .fiber,
+                    value.String => .string,
                     value.List => .list,
                     value.Map => .map,
+                    Chunk => .chunk,
+                    value.Upvalue => .upvalue,
+                    value.Closure => .closure,
+                    Fiber => .fiber,
                     else => throwInvalidGCTypeError(T),
                 },
             },
             .data = switch (T) {
-                Fiber => .{ .fiber = undefined },
+                value.String => .{ .string = undefined },
                 value.List => .{ .list = undefined },
                 value.Map => .{ .map = undefined },
+                Chunk => .{ .chunk = undefined },
+                value.Upvalue => .{ .upvalue = undefined },
+                value.Closure => .{ .closure = undefined },
+                Fiber => .{ .fiber = undefined },
                 else => throwInvalidGCTypeError(T),
             },
         };
@@ -174,14 +196,18 @@ const Object = struct {
 
     fn cast(self: *Object, comptime T: type) ?*T {
         return switch (T) {
-            Fiber => if (self.header.tag == .fiber) &self.data.fiber else null,
+            value.String => if (self.header.tag == .string) &self.data.string else null,
             value.List => if (self.header.tag == .list) &self.data.list else null,
             value.Map => if (self.header.tag == .map) &self.data.map else null,
+            Chunk => if (self.header.tag == .chunk) &self.data.chunk else null,
+            value.Upvalue => if (self.header.tag == .upvalue) &self.data.upvalue else null,
+            value.Closure => if (self.header.tag == .closure) &self.data.closure else null,
+            Fiber => if (self.header.tag == .fiber) &self.data.fiber else null,
             else => throwInvalidGCTypeError(T),
         };
     }
 
-    fn fromPtr(ptr: *anyopaque) *Object {
+    fn fromPtr(ptr: anytype) *Object {
         return @fieldParentPtr("data", @as(*Data, @ptrCast(@alignCast(ptr))));
     }
 
@@ -202,9 +228,13 @@ const Object = struct {
 
     fn mark(self: *Object, gc: *GC) !void {
         switch (self.header.tag) {
-            .fiber => try self.data.fiber.mark(gc),
+            .string => {},
             .list => try self.data.list.mark(gc),
             .map => try self.data.map.mark(gc),
+            .chunk => {},
+            .upvalue => try self.data.upvalue.mark(gc),
+            .closure => try self.data.closure.mark(gc),
+            .fiber => try self.data.fiber.mark(gc),
         }
     }
 };

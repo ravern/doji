@@ -2,15 +2,16 @@ const std = @import("std");
 const Value = @import("value.zig").Value;
 
 pub const Chunk = struct {
+    arity: u8,
     code: []const Instruction,
-    constants: []const Constant,
-};
+    constants: []const Value,
+    chunks: []const *Chunk,
 
-pub const Op = enum(u8) {
-    nop,
-    int,
-    add,
-    ret,
+    pub fn deinit(self: *Chunk, allocator: std.mem.Allocator) void {
+        allocator.free(self.code);
+        allocator.free(self.constants);
+        self.* = undefined;
+    }
 };
 
 pub const Instruction = packed struct {
@@ -18,12 +19,20 @@ pub const Instruction = packed struct {
     arg: u24,
 };
 
-pub const Constant = union(enum) {
-    value: Value,
-    function: Function,
-};
+pub const Op = enum(u8) {
+    nop,
 
-pub const Function = struct {
-    arity: u8,
-    chunk: *Chunk,
+    nil,
+    true,
+    false,
+    int,
+    constant,
+
+    add,
+    sub,
+    mul,
+    div,
+
+    call,
+    ret,
 };
