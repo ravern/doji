@@ -33,6 +33,6 @@ pub fn main() !void {
 
         const input = doji.Input{ .source = .stdin, .content = line };
         const result = try vm.evaluate(&input);
-        try out.print("{d}\n", .{result.raw});
+        try out.print("{d}\n", .{result.cast(i48).?});
     }
 }

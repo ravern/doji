@@ -1,39 +1,71 @@
 const std = @import("std");
 const GC = @import("gc.zig").GC;
-const Tracer = @import("gc.zig").Tracer;
 const Fiber = @import("vm.zig").Fiber;
 
-// needs to be extern to avoid Zig's safety check of which field is active.
-pub const Value = extern union {
-    float: f64,
+pub const Value = struct {
     raw: u64,
 
-    pub fn initList(gc: *GC) !Value {
-        const list = try gc.create(List);
-        return initPtr(list);
+    const q_nan: u64 = 0x7ffc000000000000;
+
+    const tag_nil: u64 = 0x0000000000000000;
+    const tag_true: u64 = 0x0000000000000001;
+    const tag_false: u64 = 0x0000000000000002;
+    const tag_int: u64 = 0x0000000000000003;
+    const tag_object: u64 = 0x8000000000000000;
+
+    pub const nil = Value{ .raw = q_nan | tag_nil };
+
+    pub fn init(data: anytype) Value {
+        return switch (@TypeOf(data)) {
+            bool => if (data) .{ .raw = q_nan | tag_true } else .{ .raw = q_nan | tag_false },
+            comptime_int => .{ .raw = q_nan | tag_int | makePayload(@bitCast(@as(i48, @intCast(data)))) },
+            i48 => .{ .raw = q_nan | tag_int | makePayload(@bitCast(data)) },
+            comptime_float, f64 => .{ .raw = @bitCast(@as(f64, data)) },
+            *Fiber, *List, *Map => .{ .raw = q_nan | tag_object | makePayload(@truncate(@intFromPtr(data))) },
+            else => throwInvalidTypeError(@TypeOf(data)),
+        };
     }
 
-    fn initPtr(ptr: *anyopaque) Value {
-        return .{ .raw = @intFromPtr(ptr) };
+    pub fn cast(self: Value, comptime T: type) ?T {
+        return switch (T) {
+            f64 => if (self.isFloat()) @bitCast(self.raw) else null,
+            i48 => if (self.isInt()) self.toInt() else null,
+            *Fiber, *List, *Map => if (self.isObject()) GC.cast(T, self.toObject()) else null,
+            else => throwInvalidTypeError(T),
+        };
     }
 
-    pub fn asFiber(self: Value) ?*Fiber {
-        const ptr = self.asPtr() orelse return null;
-        return GC.cast(Fiber, ptr);
+    inline fn isFloat(self: Value) bool {
+        return (self.raw & q_nan) != q_nan;
     }
 
-    pub fn asList(self: Value) ?*List {
-        const ptr = self.asPtr() orelse return null;
-        return GC.cast(List, ptr);
+    inline fn isInt(self: Value) bool {
+        return !self.isFloat() and self.raw & tag_int == tag_int;
     }
 
-    fn asPtr(self: Value) ?*anyopaque {
-        return @ptrFromInt(self.raw);
+    inline fn isObject(self: Value) bool {
+        return !self.isFloat() and self.raw & tag_object == tag_object;
     }
 
-    fn traceIfPtr(self: Value, gc: *GC, tracer: Tracer) !void {
-        if (self.asPtr()) |ptr| {
-            try tracer.trace(gc, ptr);
+    inline fn toInt(self: Value) i48 {
+        return @as(i48, @bitCast(self.getPayload()));
+    }
+
+    inline fn toObject(self: Value) *anyopaque {
+        return @ptrFromInt(self.getPayload());
+    }
+
+    inline fn makePayload(data: u48) u64 {
+        return @as(u64, @intCast(data)) << 2;
+    }
+
+    inline fn getPayload(self: Value) u48 {
+        return @truncate(self.raw >> 2);
+    }
+
+    fn markIfObject(self: Value, gc: *GC) !void {
+        if (self.isObject()) {
+            try gc.mark(self.toObject());
         }
     }
 };
@@ -46,9 +78,9 @@ pub const List = struct {
         self.* = undefined;
     }
 
-    pub fn trace(self: *List, gc: *GC, tracer: Tracer) !void {
+    pub fn mark(self: *List, gc: *GC) !void {
         for (self.items.items) |value| {
-            try value.traceIfPtr(gc, tracer);
+            try value.markIfObject(gc);
         }
     }
 };
@@ -61,11 +93,11 @@ pub const Map = struct {
         self.* = undefined;
     }
 
-    pub fn trace(self: *Map, gc: *GC, tracer: Tracer) !void {
+    pub fn mark(self: *Map, gc: *GC) !void {
         var it = self.items.iterator();
         while (it.next()) |entry| {
-            try entry.key_ptr.traceIfPtr(gc, tracer);
-            try entry.value_ptr.traceIfPtr(gc, tracer);
+            try entry.key_ptr.markIfObject(gc);
+            try entry.value_ptr.markIfObject(gc);
         }
     }
 };
@@ -84,3 +116,7 @@ pub const ValueContext = struct {
         return left.raw == right.raw;
     }
 };
+
+fn throwInvalidTypeError(comptime T: type) noreturn {
+    @compileError(@typeName(T) ++ " is not a valid type for a Doji value");
+}

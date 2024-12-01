@@ -3,7 +3,6 @@ const Chunk = @import("chunk.zig").Chunk;
 const Instruction = @import("chunk.zig").Instruction;
 const Constant = @import("chunk.zig").Constant;
 const GC = @import("gc.zig").GC;
-const Tracer = @import("gc.zig").Tracer;
 const Input = @import("input.zig").Input;
 const Value = @import("value.zig").Value;
 const List = @import("value.zig").List;
@@ -59,11 +58,11 @@ pub const VM = struct {
         while (true) {
             const instruction = try self.curr_fiber.advance();
             switch (instruction.op) {
-                .int => try self.curr_fiber.push(self.allocator, .{ .raw = instruction.arg }),
+                .int => try self.curr_fiber.push(self.allocator, Value.init(@as(i48, @intCast(instruction.arg)))),
                 .add => {
-                    const b = try self.curr_fiber.pop();
-                    const a = try self.curr_fiber.pop();
-                    try self.curr_fiber.push(self.allocator, .{ .raw = a.raw + b.raw });
+                    const right = (try self.curr_fiber.pop()).cast(i48).?;
+                    const left = (try self.curr_fiber.pop()).cast(i48).?;
+                    try self.curr_fiber.push(self.allocator, Value.init(left + right));
                 },
                 .ret => {
                     result = try self.curr_fiber.pop();
@@ -114,10 +113,9 @@ pub const Fiber = struct {
         self.* = undefined;
     }
 
-    pub fn trace(self: *Fiber, gc: *GC, tracer: Tracer) !void {
+    pub fn mark(self: *Fiber, gc: *GC) !void {
         _ = self;
         _ = gc;
-        _ = tracer;
     }
 
     pub fn pushFrame(self: *Fiber, allocator: std.mem.Allocator, arity: u8, chunk: *const Chunk) !void {

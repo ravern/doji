@@ -6,24 +6,25 @@ const value = @import("value.zig");
 pub const GC = struct {
     allocator: std.mem.Allocator,
     vm: *VM,
+    colors: Colors = .{},
     objects: ObjectList = .{},
     gray_set: std.ArrayListUnmanaged(*Object) = .{},
-
-    // colors are defined dynamically; we want to swap white and black colors dynamically, so we don't have
-    // to re-trace the entire object graph to reset objects to white after each collection cycle.
-    colors: Colors = .{},
 
     const Colors = struct {
         white: u8 = 0,
         black: u8 = 1,
         gray: u8 = 2,
 
-        fn swapWhiteAndBlack(self: *Colors) void {
+        fn swapWhiteBlack(self: *Colors) void {
             const tmp = self.white;
             self.white = self.black;
             self.black = tmp;
         }
     };
+
+    pub fn cast(comptime T: type, ptr: *anyopaque) ?*T {
+        return Object.fromPtr(ptr).cast(T);
+    }
 
     pub fn init(allocator: std.mem.Allocator, vm: *VM) GC {
         return GC{
@@ -41,14 +42,8 @@ pub const GC = struct {
     pub fn create(self: *GC, comptime T: type) !*T {
         const object = try self.allocator.create(Object);
         object.* = Object.init(self.colors.white, T);
-
         self.objects.prepend(object);
-
         return object.cast(T).?;
-    }
-
-    pub fn cast(comptime T: type, ptr: *anyopaque) ?*T {
-        return Object.fromPtr(ptr).cast(T);
     }
 
     pub fn mark(self: *GC, ptr: *anyopaque) !void {
@@ -63,12 +58,12 @@ pub const GC = struct {
             try self.blacken(object);
         }
         self.sweep();
-        self.colors.swapWhiteAndBlack();
+        self.colors.swapWhiteBlack();
     }
 
     fn blacken(self: *GC, object: *Object) !void {
         if (object.header.color == self.colors.black) return;
-        try object.trace(self, Tracer.mark);
+        try object.mark(self);
         object.header.color = self.colors.black;
     }
 
@@ -101,16 +96,6 @@ pub const GC = struct {
     }
 };
 
-pub const Tracer = enum {
-    mark,
-
-    pub fn trace(self: *const Tracer, gc: *GC, ptr: *anyopaque) !void {
-        switch (self.*) {
-            .mark => try gc.mark(ptr),
-        }
-    }
-};
-
 const ObjectList = struct {
     first: ?*Object = null,
 
@@ -140,7 +125,6 @@ const Object = struct {
     header: Header,
     data: Data,
 
-    // TODO: there's probably a way to build this at comptime from [Data]
     const Tag = enum(u8) {
         fiber,
         list,
@@ -169,27 +153,32 @@ const Object = struct {
     };
 
     fn init(color: u8, comptime T: type) Object {
-        const field_name = comptime fieldNameFromType(T);
-
-        const tag = @field(Tag, field_name);
         return .{
             .header = .{
                 .color = color,
-                .tag = @field(Tag, field_name),
+                .tag = switch (T) {
+                    Fiber => .fiber,
+                    value.List => .list,
+                    value.Map => .map,
+                    else => throwInvalidGCTypeError(T),
+                },
             },
-            // TODO: probably a more Zig-y way to do this
-            .data = switch (tag) {
-                .fiber => .{ .fiber = undefined },
-                .list => .{ .list = undefined },
-                .map => .{ .map = undefined },
+            .data = switch (T) {
+                Fiber => .{ .fiber = undefined },
+                value.List => .{ .list = undefined },
+                value.Map => .{ .map = undefined },
+                else => throwInvalidGCTypeError(T),
             },
         };
     }
 
     fn cast(self: *Object, comptime T: type) ?*T {
-        const field_name = comptime fieldNameFromType(T);
-        if (self.header.tag != @field(Tag, field_name)) return null;
-        return &@field(self.data, field_name);
+        return switch (T) {
+            Fiber => if (self.header.tag == .fiber) &self.data.fiber else null,
+            value.List => if (self.header.tag == .list) &self.data.list else null,
+            value.Map => if (self.header.tag == .map) &self.data.map else null,
+            else => throwInvalidGCTypeError(T),
+        };
     }
 
     fn fromPtr(ptr: *anyopaque) *Object {
@@ -211,22 +200,15 @@ const Object = struct {
         return next;
     }
 
-    fn trace(self: *Object, gc: *GC, tracer: Tracer) !void {
+    fn mark(self: *Object, gc: *GC) !void {
         switch (self.header.tag) {
-            .fiber => try self.data.fiber.trace(gc, tracer),
-            .list => try self.data.list.trace(gc, tracer),
-            .map => try self.data.map.trace(gc, tracer),
+            .fiber => try self.data.fiber.mark(gc),
+            .list => try self.data.list.mark(gc),
+            .map => try self.data.map.mark(gc),
         }
-    }
-
-    fn fieldNameFromType(comptime T: type) []const u8 {
-        var field_name: ?[]const u8 = null;
-        for (@typeInfo(Data).Union.fields) |field| {
-            if (field.type == T) {
-                field_name = field.name;
-                break;
-            }
-        }
-        return field_name.?;
     }
 };
+
+fn throwInvalidGCTypeError(comptime T: type) void {
+    @compileError(T.name ++ " is not a valid GC object");
+}
