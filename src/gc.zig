@@ -242,3 +242,14 @@ const Object = struct {
 fn throwInvalidGCTypeError(comptime T: type) void {
     @compileError(T.name ++ " is not a valid GC object");
 }
+
+comptime {
+    @compileLog("value.String", @sizeOf(value.String), @alignOf(value.String));
+    @compileLog("value.List", @sizeOf(value.List), @alignOf(value.List));
+    @compileLog("value.Map", @sizeOf(value.Map), @alignOf(value.Map));
+    @compileLog("Chunk", @sizeOf(Chunk), @alignOf(Chunk));
+    @compileLog("value.Upvalue", @sizeOf(value.Upvalue), @alignOf(value.Upvalue));
+    @compileLog("value.Closure", @sizeOf(value.Closure), @alignOf(value.Closure));
+    @compileLog("Fiber", @sizeOf(Fiber), @alignOf(Fiber));
+    @compileLog("Object.Data", @sizeOf(Object.Data), @alignOf(Object.Data));
+}

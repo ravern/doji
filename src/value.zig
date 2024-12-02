@@ -36,7 +36,7 @@ pub const Value = struct {
 
     pub fn cast(self: Value, comptime T: type) ?T {
         return switch (T) {
-            bool => if (self.isTrue() or self.isFalse()) self.isTrue() else null,
+            bool => if (self.isBool()) self.toBool() else null,
             i48 => if (self.isInt()) self.toInt() else null,
             f64 => if (self.isFloat()) self.toFloat() else null,
             *String, *List, *Map, *Closure, *Fiber => if (self.isObject()) GC.cast(std.meta.Child(T), self.toPtr()) else null,
@@ -45,11 +45,8 @@ pub const Value = struct {
         };
     }
 
-    fn isTrue(self: Value) bool {
-        return self.raw & tag_true == tag_true;
-    }
-    fn isFalse(self: Value) bool {
-        return self.raw & tag_false == tag_false;
+    fn isBool(self: Value) bool {
+        return self.raw & tag_true == tag_true or self.raw & tag_false == tag_false;
     }
     fn isFloat(self: Value) bool {
         return (self.raw & q_nan) != q_nan;
@@ -165,14 +162,14 @@ pub const Value = struct {
     }
     fn intBinaryOp(self: Value, other: Value, op: fn (i48, i48) Value) ?Value {
         if (self.isInt() and other.isInt()) {
-            return op(self.toInt().?, other.toInt().?);
+            return op(self.toInt(), other.toInt());
         } else {
             return null;
         }
     }
     fn boolBinaryOp(self: Value, other: Value, op: fn (bool, bool) Value) ?Value {
         if (self.isBool() and other.isBool()) {
-            return op(self.toBool().?, other.toBool().?);
+            return op(self.toBool(), other.toBool());
         } else {
             return null;
         }
@@ -311,6 +308,13 @@ pub const String = struct {
     pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
         allocator.free(self.str);
         self.* = undefined;
+    }
+
+    pub fn concat(allocator: std.mem.Allocator, gc: *GC, left: *const String, right: *const String) *String {
+        const str = try std.mem.concat(allocator, u8, &.{ left.str, right.str });
+        const string = try gc.create(String);
+        string.* = String.init(str);
+        return string;
     }
 
     fn hash(self: String) u64 {
