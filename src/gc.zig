@@ -3,6 +3,8 @@ const value = @import("value.zig");
 
 pub const GC = GarbageCollector(union {
     string: value.String,
+    list: value.List,
+    map: value.Map,
 });
 
 pub fn GarbageCollector(
