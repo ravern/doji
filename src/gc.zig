@@ -1,10 +1,17 @@
 const std = @import("std");
+const code = @import("code.zig");
 const value = @import("value.zig");
 
 pub const GC = GarbageCollector(union {
+    // values
     string: value.String,
     list: value.List,
     map: value.Map,
+    closure: value.Closure,
+    fiber: value.Fiber,
+    // non-values
+    chunk: code.Chunk,
+    upvalue: value.Upvalue,
 });
 
 pub fn GarbageCollector(
@@ -91,7 +98,7 @@ pub fn GarbageCollector(
                 mark,
             };
 
-            fn trace(self: Tracer, object_data: *anyopaque) !void {
+            pub fn trace(self: Tracer, object_data: *anyopaque) !void {
                 switch (self.action) {
                     .mark => try self.gc.mark(object_data),
                 }
@@ -125,7 +132,7 @@ pub fn GarbageCollector(
             return object_data;
         }
 
-        pub fn getTag(self: *Self, object_data: *anyopaque) ObjectTag {
+        pub fn getTag(self: *const Self, object_data: *anyopaque) ObjectTag {
             _ = self;
 
             return headerFromData(object_data).tag;
@@ -178,7 +185,7 @@ pub fn GarbageCollector(
             self.destroyObjectList(&white_set);
         }
 
-        fn destroyObjectList(self: *Self, objects: *ObjectList) void {
+        fn destroyObjectList(self: *const Self, objects: *ObjectList) void {
             var curr_object_header = objects.first;
             while (curr_object_header) |object_header| : (curr_object_header = object_header.getNext()) {
                 self.mutator.vtable.finalize(self.mutator.ptr, object_header.tag, dataFromHeader(object_header));
@@ -188,7 +195,7 @@ pub fn GarbageCollector(
             }
         }
 
-        fn destroyObjectHeader(self: *Self, object_header: *ObjectHeader) void {
+        fn destroyObjectHeader(self: *const Self, object_header: *ObjectHeader) void {
             const total_len = object_header_len + object_size_map.get(object_header.tag);
             self.allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
         }
