@@ -1,6 +1,8 @@
 const std = @import("std");
 const code = @import("code.zig");
 const GC = @import("gc.zig").GC;
+const EmptyMutator = @import("gc.zig").MockMutator;
+const StringPool = @import("vm.zig").StringPool;
 
 pub const Value = struct {
     raw: u64,
@@ -32,14 +34,7 @@ pub const Value = struct {
         pub fn eql(self: HashMapContext, left: Value, right: Value) bool {
             _ = self;
 
-            if (left.raw != right.raw) {
-                if (left.cast(*String)) |left_string| {
-                    if (right.cast(*String)) |right_string| {
-                        return std.mem.eql(u8, left_string.data, right_string.data);
-                    }
-                }
-            }
-            return left.raw == right.raw;
+            return Value.eql(left, right);
         }
     };
 
@@ -62,7 +57,7 @@ pub const Value = struct {
             bool => if (!self.isFloat() and (self.hasTag(.true) or self.hasTag(.false))) self.hasTag(.true) else null,
             f64 => if (self.isFloat()) @bitCast(self.raw) else null,
             i48 => if (!self.isFloat() and self.hasTag(.int)) intFromRaw(self.raw) else null,
-            *String, *List, *Map, *Closure, *Fiber => if (!self.isFloat() and self.hasTag(.gc_object)) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
+            *String, *List, *Map, *Closure, *Fiber => if (!self.isFloat() and self.hasTag(.gc_object) and GC.isType(@typeInfo(T).Pointer.child, ptrFromRaw(self.raw))) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
             *ForeignFn => if (!self.isFloat() and self.hasTag(.foreign_fn)) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
             else => invalidValueTypeError(T),
         };
@@ -70,6 +65,54 @@ pub const Value = struct {
 
     pub fn trace(self: Value, tracer: *GC.Tracer) !void {
         if (self.hasTag(.gc_object)) try tracer.trace(ptrFromRaw(self.raw));
+    }
+
+    pub fn eql(left: Value, right: Value) bool {
+        if (left.raw != right.raw) {
+            if (left.cast(*String)) |left_string| {
+                if (right.cast(*String)) |right_string| {
+                    return std.mem.eql(u8, left_string.data, right_string.data);
+                }
+            }
+        }
+        return left.raw == right.raw;
+    }
+
+    pub fn isNil(self: Value) bool {
+        return self.eql(nil);
+    }
+
+    pub fn add(left: Value, right: Value) ?Value {
+        return intOrFloatBinaryOp(left, right, addInt, addFloat);
+    }
+    pub fn sub(left: Value, right: Value) ?Value {
+        return intOrFloatBinaryOp(left, right, subInt, subFloat);
+    }
+    pub fn mul(left: Value, right: Value) ?Value {
+        return intOrFloatBinaryOp(left, right, mulInt, mulFloat);
+    }
+    pub fn div(left: Value, right: Value) ?Value {
+        return intOrFloatBinaryOp(left, right, divInt, divFloat);
+    }
+
+    inline fn intOrFloatBinaryOp(left: Value, right: Value, comptime int_op: fn (i48, i48) i48, comptime float_op: fn (f64, f64) f64) ?Value {
+        return intOp(left, right, int_op) orelse return floatOp(left, right, float_op);
+    }
+    inline fn intOp(left: Value, right: Value, comptime op: fn (i48, i48) i48) ?Value {
+        if (left.cast(i48)) |left_int| {
+            if (right.cast(i48)) |right_int| {
+                return Value.init(op(left_int, right_int));
+            }
+        }
+        return null;
+    }
+    inline fn floatOp(left: Value, right: Value, comptime op: fn (f64, f64) f64) ?Value {
+        if (left.cast(f64)) |left_float| {
+            if (right.cast(f64)) |right_float| {
+                return Value.init(op(left_float, right_float));
+            }
+        }
+        return null;
     }
 
     inline fn isFloat(self: Value) bool {
@@ -110,10 +153,19 @@ fn invalidValueTypeError(comptime T: type) noreturn {
 }
 
 test Value {
-    var string: String = undefined;
-    var list: List = undefined;
-    var map: Map = undefined;
-    var fiber: Fiber = undefined;
+    const allocator = std.testing.allocator;
+
+    var mutator = try EmptyMutator.init(allocator);
+    defer mutator.deinit(allocator);
+
+    var gc = GC.init(allocator, mutator.mutator());
+    defer gc.deinit();
+
+    const string: *String = try gc.create(String);
+    const list: *List = try gc.create(List);
+    const map: *Map = try gc.create(Map);
+    const fiber: *Fiber = try gc.create(Fiber);
+
     var foreign_fn: ForeignFn = undefined;
 
     // positive tests
@@ -127,13 +179,13 @@ test Value {
     try std.testing.expectEqual(3.14159, Value.init(3.14159).cast(f64).?);
     try std.testing.expectEqual(-2.71828, Value.init(-2.71828).cast(f64).?);
 
-    try std.testing.expectEqual(&string, Value.init(&string).cast(*String).?);
+    try std.testing.expectEqual(string, Value.init(string).cast(*String).?);
 
-    try std.testing.expectEqual(&list, Value.init(&list).cast(*List).?);
+    try std.testing.expectEqual(list, Value.init(list).cast(*List).?);
 
-    try std.testing.expectEqual(&map, Value.init(&map).cast(*Map).?);
+    try std.testing.expectEqual(map, Value.init(map).cast(*Map).?);
 
-    try std.testing.expectEqual(&fiber, Value.init(&fiber).cast(*Fiber).?);
+    try std.testing.expectEqual(fiber, Value.init(fiber).cast(*Fiber).?);
 
     try std.testing.expectEqual(&foreign_fn, Value.init(&foreign_fn).cast(*ForeignFn).?);
 
@@ -142,16 +194,23 @@ test Value {
     try std.testing.expectEqual(null, Value.init(true).cast(i48));
     try std.testing.expectEqual(null, Value.init(32).cast(f64));
     try std.testing.expectEqual(null, Value.init(3.14159).cast(i48));
-    try std.testing.expectEqual(null, Value.init(&string).cast(i48));
-    try std.testing.expectEqual(null, Value.init(&list).cast(i48));
-    try std.testing.expectEqual(null, Value.init(&map).cast(i48));
-    try std.testing.expectEqual(null, Value.init(&fiber).cast(i48));
+    try std.testing.expectEqual(null, Value.init(string).cast(i48));
+    try std.testing.expectEqual(null, Value.init(list).cast(i48));
+    try std.testing.expectEqual(null, Value.init(map).cast(i48));
+    try std.testing.expectEqual(null, Value.init(fiber).cast(i48));
     try std.testing.expectEqual(null, Value.init(&foreign_fn).cast(i48));
 }
 
 pub const String = struct {
     data: []const u8,
     hash: u64,
+
+    pub fn init(data: []const u8) String {
+        return .{
+            .data = data,
+            .hash = std.hash.Wyhash.hash(0, data),
+        };
+    }
 
     pub fn deinit(self: *String, allocator: std.mem.Allocator) void {
         allocator.free(self.data);
@@ -303,6 +362,10 @@ pub const Fiber = struct {
         return self.stack.items[self.getCurrentFrame().bp_index + index];
     }
 
+    pub fn getConstant(self: *const Fiber, index: usize) ?Value {
+        return self.getCurrentFrame().closure.chunk.constants[index];
+    }
+
     pub fn getRoot(self: *Fiber) *Fiber {
         var curr_fiber = self;
         while (curr_fiber.parent) |parent_fiber| {
@@ -384,6 +447,7 @@ pub const ForeignFn = struct {
     pub const Context = struct {
         allocator: std.mem.Allocator,
         gc: *GC,
+        string_pool: *StringPool,
     };
 
     pub const Result = union(enum) {
@@ -392,3 +456,29 @@ pub const ForeignFn = struct {
         yield: Value,
     };
 };
+
+fn addInt(left: i48, right: i48) i48 {
+    return left + right;
+}
+fn subInt(left: i48, right: i48) i48 {
+    return left - right;
+}
+fn mulInt(left: i48, right: i48) i48 {
+    return left * right;
+}
+fn divInt(left: i48, right: i48) i48 {
+    return @divTrunc(left, right);
+}
+
+fn addFloat(left: f64, right: f64) f64 {
+    return left + right;
+}
+fn subFloat(left: f64, right: f64) f64 {
+    return left - right;
+}
+fn mulFloat(left: f64, right: f64) f64 {
+    return left * right;
+}
+fn divFloat(left: f64, right: f64) f64 {
+    return left / right;
+}

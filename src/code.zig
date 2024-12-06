@@ -38,6 +38,11 @@ pub const Instruction = packed struct {
 
     pub const Op = enum(u8) {
         int,
+        constant,
+        add,
+        sub,
+        mul,
+        div,
         ret,
     };
 };

@@ -100,7 +100,12 @@ pub fn GarbageCollector(
 
             pub fn trace(self: Tracer, object_data: *anyopaque) !void {
                 switch (self.action) {
-                    .mark => try self.gc.mark(object_data),
+                    .mark => {
+                        const object_header = headerFromData(object_data);
+                        // during a trace, we don't need to re-mark black objects.
+                        if (object_header.color == self.gc.colors.black) return;
+                        try self.gc.mark(object_data);
+                    },
                 }
             }
         };
@@ -113,6 +118,10 @@ pub fn GarbageCollector(
             self.destroyObjectList(&self.objects);
             self.gray_set.deinit(self.allocator);
             self.* = undefined;
+        }
+
+        pub fn isType(comptime T: type, object_data: *anyopaque) bool {
+            return headerFromData(object_data).tag == tagFromObjectType(Object, T);
         }
 
         pub fn create(self: *Self, comptime T: type) !*T {
@@ -132,15 +141,9 @@ pub fn GarbageCollector(
             return object_data;
         }
 
-        pub fn getTag(self: *const Self, object_data: *anyopaque) ObjectTag {
-            _ = self;
-
-            return headerFromData(object_data).tag;
-        }
-
         pub fn mark(self: *Self, object_data: *anyopaque) !void {
             const object_header = headerFromData(object_data);
-            if (object_header.color == self.colors.gray or object_header.color == self.colors.black) return;
+            if (object_header.color == self.colors.gray) return;
             object_header.color = self.colors.gray;
             try self.gray_set.append(self.allocator, object_header);
         }
@@ -462,6 +465,13 @@ fn tagFromObjectType(comptime Object: type, comptime T: type) TagFromObject(Obje
     unreachable;
 }
 
+test tagFromObjectType {
+    const Object = union { a: u8, b: u16, c: u32 };
+    try std.testing.expectEqual(0, @intFromEnum(tagFromObjectType(Object, u8)));
+    try std.testing.expectEqual(1, @intFromEnum(tagFromObjectType(Object, u16)));
+    try std.testing.expectEqual(2, @intFromEnum(tagFromObjectType(Object, u32)));
+}
+
 fn verifyObjectType(comptime Object: type, comptime T: type) void {
     const fields = getUnionFields(Object);
     inline for (fields) |field| {
@@ -502,3 +512,42 @@ fn getUnionFields(comptime Object: type) []const std.builtin.Type.UnionField {
         else => @compileError("Object must be a union"),
     };
 }
+
+pub const MockMutator = struct {
+    pub fn mutator(self: *MockMutator) GC.Mutator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .mark_roots = markRoots,
+                .trace = traceObject,
+                .finalize = finalizeObject,
+            },
+        };
+    }
+
+    pub fn init(allocator: std.mem.Allocator) !*MockMutator {
+        return try allocator.create(MockMutator);
+    }
+
+    pub fn deinit(self: *MockMutator, allocator: std.mem.Allocator) void {
+        allocator.destroy(self);
+    }
+
+    fn markRoots(ctx: *anyopaque, gc: *GC) !void {
+        _ = ctx;
+        _ = gc;
+    }
+
+    fn traceObject(ctx: *anyopaque, tracer: *GC.Tracer, tag: GC.ObjectTag, data: *anyopaque) !void {
+        _ = ctx;
+        _ = tracer;
+        _ = tag;
+        _ = data;
+    }
+
+    fn finalizeObject(ctx: *anyopaque, tag: GC.ObjectTag, data: *anyopaque) void {
+        _ = ctx;
+        _ = tag;
+        _ = data;
+    }
+};
