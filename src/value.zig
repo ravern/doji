@@ -47,7 +47,7 @@ pub const Value = struct {
             comptime_float, f64 => Value{ .raw = @bitCast(@as(f64, @floatCast(data))) },
             comptime_int, i48 => Value{ .raw = q_nan | @intFromEnum(Tag.int) | rawFromInt(@intCast(data)) },
             *String, *List, *Map, *Closure, *Fiber => Value{ .raw = q_nan | @intFromEnum(Tag.gc_object) | rawFromPtr(data) },
-            *ForeignFn => Value{ .raw = q_nan | @intFromEnum(Tag.foreign_fn) | rawFromPtr(data) },
+            *const ForeignFn => Value{ .raw = q_nan | @intFromEnum(Tag.foreign_fn) | rawFromPtr(@constCast(data)) },
             else => invalidValueTypeError(T),
         };
     }
@@ -58,7 +58,7 @@ pub const Value = struct {
             f64 => if (self.isFloat()) @bitCast(self.raw) else null,
             i48 => if (!self.isFloat() and self.hasTag(.int)) intFromRaw(self.raw) else null,
             *String, *List, *Map, *Closure, *Fiber => if (!self.isFloat() and self.hasTag(.gc_object) and GC.isType(@typeInfo(T).Pointer.child, ptrFromRaw(self.raw))) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
-            *ForeignFn => if (!self.isFloat() and self.hasTag(.foreign_fn)) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
+            *const ForeignFn => if (!self.isFloat() and self.hasTag(.foreign_fn)) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
             else => invalidValueTypeError(T),
         };
     }
@@ -166,7 +166,7 @@ test Value {
     const map: *Map = try gc.create(Map);
     const fiber: *Fiber = try gc.create(Fiber);
 
-    var foreign_fn: ForeignFn = undefined;
+    const foreign_fn: ForeignFn = undefined;
 
     // positive tests
 
@@ -187,7 +187,7 @@ test Value {
 
     try std.testing.expectEqual(fiber, Value.init(fiber).cast(*Fiber).?);
 
-    try std.testing.expectEqual(&foreign_fn, Value.init(&foreign_fn).cast(*ForeignFn).?);
+    try std.testing.expectEqual(&foreign_fn, Value.init(&foreign_fn).cast(*const ForeignFn).?);
 
     // negative tests
 
@@ -297,11 +297,26 @@ pub const Fiber = struct {
 
     const default_stack_size = 1024;
 
-    pub const CallFrame = struct {
+    pub const CallFrame = union(enum) {
+        closure: ClosureCallFrame,
+        foreign_fn: ForeignFnCallFrame,
+    };
+
+    pub const ClosureCallFrame = struct {
         closure: *Closure,
         chunk: *const code.Chunk, // saves a pointer lookup each step
         ip: [*]const code.Instruction,
         bp_index: usize,
+    };
+
+    pub const ForeignFnCallFrame = struct {
+        foreign_fn: *const ForeignFn,
+        step_index: usize = 0,
+    };
+
+    pub const Step = union(enum) {
+        instruction: code.Instruction,
+        step_fn: ForeignFn.StepFn,
     };
 
     pub fn init(allocator: std.mem.Allocator, closure: *Closure) !Fiber {
@@ -311,10 +326,12 @@ pub const Fiber = struct {
         };
 
         try self.call_stack.append(allocator, .{
-            .closure = closure,
-            .chunk = closure.chunk,
-            .ip = closure.chunk.code.ptr,
-            .bp_index = 0,
+            .closure = .{
+                .closure = closure,
+                .chunk = closure.chunk,
+                .ip = closure.chunk.code.ptr,
+                .bp_index = 0,
+            },
         });
 
         return self;
@@ -331,39 +348,11 @@ pub const Fiber = struct {
             try value.trace(tracer);
         }
         for (self.call_stack.items) |frame| {
-            try frame.chunk.trace(tracer);
+            switch (frame) {
+                .closure => |closure_frame| try closure_frame.chunk.trace(tracer),
+                .foreign_fn => {},
+            }
         }
-    }
-
-    pub fn push(self: *Fiber, allocator: std.mem.Allocator, value: Value) !void {
-        try self.stack.append(allocator, value);
-    }
-
-    pub fn pop(self: *Fiber) ?Value {
-        return self.stack.popOrNull();
-    }
-
-    pub fn pushFrame(self: *Fiber, allocator: std.mem.Allocator, closure: *Closure) !void {
-        try self.call_stack.append(allocator, .{
-            .closure = closure,
-            .chunk = closure.chunk,
-            .ip = closure.chunk.code.ptr,
-            // FIXME: assumes arity has been checked
-            .bp_index = self.stack.items.len - closure.chunk.arity,
-        });
-    }
-
-    pub fn popFrame(self: *Fiber) ?CallFrame {
-        if (self.call_stack.items.len == 1) return null;
-        return self.call_stack.pop();
-    }
-
-    pub fn get(self: *const Fiber, index: usize) ?Value {
-        return self.stack.items[self.getCurrentFrame().bp_index + index];
-    }
-
-    pub fn getConstant(self: *const Fiber, index: usize) ?Value {
-        return self.getCurrentFrame().closure.chunk.constants[index];
     }
 
     pub fn getRoot(self: *Fiber) *Fiber {
@@ -374,14 +363,74 @@ pub const Fiber = struct {
         return curr_fiber;
     }
 
-    pub fn advance(self: *Fiber) ?code.Instruction {
-        const frame = self.getCurrentFrame();
-        const inst = frame.ip[0];
-        frame.ip += 1;
-        return inst;
+    pub fn push(self: *Fiber, allocator: std.mem.Allocator, value: Value) !void {
+        try self.stack.append(allocator, value);
     }
 
-    fn getCurrentFrame(self: *const Fiber) *CallFrame {
+    pub fn pop(self: *Fiber) ?Value {
+        return self.stack.popOrNull();
+    }
+
+    pub fn get(self: *const Fiber, index: usize) ?Value {
+        const frame = self.getCurrentLocalFrame() orelse return null;
+        return self.stack.items[frame.bp_index + index];
+    }
+
+    pub fn getFromTop(self: *const Fiber, index: usize) ?Value {
+        return self.stack.items[self.stack.items.len - 1 - index];
+    }
+
+    pub fn pushClosureFrame(self: *Fiber, allocator: std.mem.Allocator, closure: *Closure) !void {
+        try self.call_stack.append(allocator, .{
+            .closure = .{
+                .closure = closure,
+                .chunk = closure.chunk,
+                .ip = closure.chunk.code.ptr,
+                // FIXME: assumes arity has been checked
+                .bp_index = self.stack.items.len - closure.chunk.arity,
+            },
+        });
+    }
+
+    pub fn pushForeignFnFrame(self: *Fiber, allocator: std.mem.Allocator, foreign_fn: *const ForeignFn) !void {
+        try self.call_stack.append(allocator, .{ .foreign_fn = .{ .foreign_fn = foreign_fn } });
+    }
+
+    pub fn popFrame(self: *Fiber) ?CallFrame {
+        if (self.call_stack.items.len == 1) return null;
+        return self.call_stack.pop();
+    }
+
+    pub fn getConstant(self: *const Fiber, index: usize) ?Value {
+        const frame = self.getCurrentLocalFrame() orelse return null;
+        return frame.closure.chunk.constants[index];
+    }
+
+    pub fn advance(self: *Fiber) ?Step {
+        const frame = self.getCurrentFrame();
+        switch (frame.*) {
+            .closure => {
+                const inst = frame.closure.ip[0];
+                frame.closure.ip += 1;
+                return Step{ .instruction = inst };
+            },
+            .foreign_fn => {
+                const step_fn = frame.foreign_fn.foreign_fn.step_fns[frame.foreign_fn.step_index];
+                frame.foreign_fn.step_index += 1;
+                return Step{ .step_fn = step_fn };
+            },
+        }
+    }
+
+    inline fn getCurrentLocalFrame(self: *const Fiber) ?*ClosureCallFrame {
+        const frame = self.getCurrentFrame();
+        switch (frame.*) {
+            .closure => return &frame.closure,
+            .foreign_fn => return null,
+        }
+    }
+
+    inline fn getCurrentFrame(self: *const Fiber) *CallFrame {
         // call stack is always non-empty
         return &self.call_stack.items[self.call_stack.items.len - 1];
     }
@@ -407,7 +456,7 @@ test Fiber {
     try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
     try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
 
-    try fiber.pushFrame(allocator, &closure_two);
+    try fiber.pushClosureFrame(allocator, &closure_two);
 
     try fiber.push(allocator, Value.init(3));
 
@@ -419,9 +468,9 @@ test Fiber {
     try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
     try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
 
-    try fiber.pushFrame(allocator, &closure_three);
+    try fiber.pushClosureFrame(allocator, &closure_three);
 
-    try std.testing.expectEqual(.ret, fiber.advance().?.op);
+    try std.testing.expectEqual(.ret, fiber.advance().?.instruction.op);
 
     try fiber.push(allocator, Value.init(4));
 
@@ -441,19 +490,21 @@ test Fiber {
 }
 
 pub const ForeignFn = struct {
-    entry_fn: *const fn (ctx: Context) Result,
-    body_fns: []*const fn (ctx: Context) Result,
+    arity: usize,
+    step_fns: []const StepFn,
+
+    pub const StepFn = *const fn (ctx: Context) anyerror!Result;
 
     pub const Context = struct {
         allocator: std.mem.Allocator,
+        fiber: *Fiber,
         gc: *GC,
         string_pool: *StringPool,
     };
 
     pub const Result = union(enum) {
         ret: Value,
-        err: Value,
-        yield: Value,
+        call: usize,
     };
 };
 

@@ -39,10 +39,12 @@ pub const Instruction = packed struct {
     pub const Op = enum(u8) {
         int,
         constant,
+        foreign_fn,
         add,
         sub,
         mul,
         div,
+        call,
         ret,
     };
 };

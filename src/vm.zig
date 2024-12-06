@@ -1,6 +1,6 @@
 const std = @import("std");
 const code = @import("code.zig");
-const compile = @import("compile.zig");
+const compile = @import("compile.zig").compile;
 const GC = @import("gc.zig").GC;
 const MockMutator = @import("gc.zig").MockMutator;
 const Value = @import("value.zig").Value;
@@ -10,13 +10,16 @@ const Map = @import("value.zig").Map;
 const Closure = @import("value.zig").Closure;
 const Upvalue = @import("value.zig").Upvalue;
 const Fiber = @import("value.zig").Fiber;
+const ForeignFn = @import("value.zig").ForeignFn;
 const Source = @import("source.zig").Source;
+const prelude = @import("prelude.zig");
 
 pub const VM = struct {
     allocator: std.mem.Allocator,
     gc: GC,
     fiber: *Fiber,
     string_pool: StringPool,
+    foreign_fn_registry: ForeignFnRegistry,
 
     fn mutator(self: *VM) GC.Mutator {
         return .{
@@ -36,6 +39,7 @@ pub const VM = struct {
             .gc = GC.init(allocator, self.mutator()),
             .fiber = undefined,
             .string_pool = undefined,
+            .foreign_fn_registry = ForeignFnRegistry.init(self.allocator),
         };
 
         self.string_pool = StringPool.init(self.allocator, &self.gc);
@@ -45,34 +49,74 @@ pub const VM = struct {
 
     pub fn deinit(self: *VM) void {
         self.gc.deinit();
+        self.string_pool.deinit();
+        self.foreign_fn_registry.deinit();
         self.allocator.destroy(self);
     }
 
-    pub fn evaluate(self: *VM, source: *const Source) !Value {
-        const compile_ctx = compile.Context{ .allocator = self.allocator, .gc = &self.gc, .string_pool = &self.string_pool, .globals = &.{} };
-        const compile_result = try compile.compile(compile_ctx, source);
+    pub fn registerForeignFn(self: *VM, name: []const u8, foreign_fn: *const ForeignFn) !void {
+        try self.foreign_fn_registry.register(name, foreign_fn);
+    }
 
-        const closure = try self.gc.create(Closure);
-        closure.* = .{ .chunk = compile_result.chunk, .upvalues = &.{} };
+    pub fn evaluate(self: *VM, source: *const Source) !Value {
+        const compile_result = try compile(
+            .{
+                .allocator = self.allocator,
+                .gc = &self.gc,
+                .string_pool = &self.string_pool,
+                .globals = &.{},
+            },
+            source,
+        );
+
+        const root_closure = try self.gc.create(Closure);
+        root_closure.* = .{ .chunk = compile_result.chunk, .upvalues = &.{} };
+
         self.fiber = try self.gc.create(Fiber);
-        self.fiber.* = try Fiber.init(self.allocator, closure);
+        self.fiber.* = try Fiber.init(self.allocator, root_closure);
 
         while (true) {
-            const inst = self.fiber.advance() orelse return error.CorruptedBytecode;
-            switch (inst.op) {
-                .int => {
-                    const value = Value.init(@as(i48, @intCast(inst.arg)));
-                    try self.fiber.push(self.allocator, value);
+            const step = self.fiber.advance() orelse return error.CorruptedBytecode;
+            switch (step) {
+                .instruction => |inst| switch (inst.op) {
+                    .int => {
+                        const value = Value.init(@as(i48, @intCast(inst.arg)));
+                        try self.fiber.push(self.allocator, value);
+                    },
+                    .constant => {
+                        const value = self.fiber.getConstant(@intCast(inst.arg)) orelse return error.CorruptedBytecode;
+                        try self.fiber.push(self.allocator, value);
+                    },
+                    .foreign_fn => {
+                        const foreign_fn = self.foreign_fn_registry.get(@intCast(inst.arg)) orelse return error.CorruptedBytecode;
+                        try self.fiber.push(self.allocator, Value.init(foreign_fn));
+                    },
+                    .add => try self.fiber.push(self.allocator, try self.binaryOp(Value.add)),
+                    .sub => try self.fiber.push(self.allocator, try self.binaryOp(Value.sub)),
+                    .mul => try self.fiber.push(self.allocator, try self.binaryOp(Value.mul)),
+                    .div => try self.fiber.push(self.allocator, try self.binaryOp(Value.div)),
+                    .call => try self.call(@intCast(inst.arg)),
+                    .ret => return self.fiber.pop() orelse return error.CorruptedBytecode,
                 },
-                .constant => {
-                    const value = self.fiber.getConstant(@intCast(inst.arg)) orelse return error.CorruptedBytecode;
-                    try self.fiber.push(self.allocator, value);
+                .step_fn => |step_fn| {
+                    const result = try step_fn(.{
+                        .allocator = self.allocator,
+                        .fiber = self.fiber,
+                        .gc = &self.gc,
+                        .string_pool = &self.string_pool,
+                    });
+                    switch (result) {
+                        .ret => {
+                            _ = self.fiber.popFrame();
+                            try self.fiber.push(self.allocator, result.ret);
+                        },
+                        .call => {
+                            const closure_value = self.fiber.getFromTop(result.call) orelse return error.CorruptedBytecode;
+                            const closure = closure_value.cast(*Closure) orelse return error.CorruptedBytecode;
+                            try self.fiber.pushClosureFrame(self.allocator, closure);
+                        },
+                    }
                 },
-                .add => try self.fiber.push(self.allocator, try self.binaryOp(Value.add)),
-                .sub => try self.fiber.push(self.allocator, try self.binaryOp(Value.sub)),
-                .mul => try self.fiber.push(self.allocator, try self.binaryOp(Value.mul)),
-                .div => try self.fiber.push(self.allocator, try self.binaryOp(Value.div)),
-                .ret => return self.fiber.pop() orelse return error.CorruptedBytecode,
             }
         }
 
@@ -82,7 +126,17 @@ pub const VM = struct {
     fn binaryOp(self: *VM, op: fn (Value, Value) ?Value) !Value {
         const right = self.fiber.pop() orelse return error.CorruptedBytecode;
         const left = self.fiber.pop() orelse return error.CorruptedBytecode;
-        return op(left, right) orelse return error.CorruptedBytecode;
+        return op(left, right) orelse error.TODO;
+    }
+
+    fn call(self: *VM, arity: usize) !void {
+        const callable = self.fiber.getFromTop(arity) orelse return error.CorruptedBytecode;
+        if (callable.cast(*const ForeignFn)) |foreign_fn| {
+            if (foreign_fn.arity != arity) return error.TODO;
+            try self.fiber.pushForeignFnFrame(self.allocator, foreign_fn);
+        } else {
+            return error.CorruptedBytecode;
+        }
     }
 
     fn markRoots(ctx: *anyopaque, gc: *GC) !void {
@@ -125,6 +179,8 @@ test VM {
 
     var vm = try VM.init(allocator);
     defer vm.deinit();
+
+    try vm.registerForeignFn("add", prelude.add_foreign_fn);
 
     const result = try vm.evaluate(&.{ .path = .stdin, .content = "" });
     try std.testing.expectEqual(-57, result.cast(i48).?);
@@ -175,3 +231,33 @@ test StringPool {
     try std.testing.expect(Value.eql(value_one, value_two));
     try std.testing.expect(!Value.eql(value_one, value_three));
 }
+
+pub const ForeignFnRegistry = struct {
+    indices: std.StringHashMap(usize),
+    data: std.ArrayList(*const ForeignFn),
+
+    pub fn init(allocator: std.mem.Allocator) ForeignFnRegistry {
+        return .{
+            .indices = std.StringHashMap(usize).init(allocator),
+            .data = std.ArrayList(*const ForeignFn).init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *ForeignFnRegistry) void {
+        self.indices.deinit();
+        self.data.deinit();
+    }
+
+    pub fn register(self: *ForeignFnRegistry, name: []const u8, foreign_fn: *const ForeignFn) !void {
+        try self.data.append(foreign_fn);
+        try self.indices.put(name, self.data.items.len - 1);
+    }
+
+    pub fn getIndex(self: *ForeignFnRegistry, name: []const u8) ?usize {
+        return self.indices.get(name);
+    }
+
+    pub fn get(self: *ForeignFnRegistry, index: usize) ?*const ForeignFn {
+        return self.data.items[index];
+    }
+};

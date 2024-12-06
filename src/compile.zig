@@ -22,11 +22,12 @@ pub fn compile(ctx: Context, source: *const Source) !Result {
 
     const insts = [_]code.Instruction{
         .{ .op = .int, .arg = 5 },
+        .{ .op = .foreign_fn, .arg = 0 },
         .{ .op = .int, .arg = 6 },
         .{ .op = .int, .arg = 7 },
         .{ .op = .int, .arg = 8 },
         .{ .op = .mul },
-        .{ .op = .add },
+        .{ .op = .call, .arg = 2 },
         .{ .op = .sub },
         .{ .op = .ret },
     };
