@@ -3,6 +3,7 @@ const code = @import("code.zig");
 const GC = @import("gc.zig").GC;
 const EmptyMutator = @import("gc.zig").MockMutator;
 const StringPool = @import("vm.zig").StringPool;
+const Source = @import("source.zig").Source;
 
 pub const Value = struct {
     raw: u64,
@@ -46,7 +47,7 @@ pub const Value = struct {
             bool => Value{ .raw = q_nan | (if (data) @intFromEnum(Tag.true) else @intFromEnum(Tag.false)) },
             comptime_float, f64 => Value{ .raw = @bitCast(@as(f64, @floatCast(data))) },
             comptime_int, i48 => Value{ .raw = q_nan | @intFromEnum(Tag.int) | rawFromInt(@intCast(data)) },
-            *String, *List, *Map, *Closure, *Fiber => Value{ .raw = q_nan | @intFromEnum(Tag.gc_object) | rawFromPtr(data) },
+            *String, *List, *Map, *Error, *Closure, *Fiber => Value{ .raw = q_nan | @intFromEnum(Tag.gc_object) | rawFromPtr(data) },
             *const ForeignFn => Value{ .raw = q_nan | @intFromEnum(Tag.foreign_fn) | rawFromPtr(@constCast(data)) },
             else => invalidValueTypeError(T),
         };
@@ -57,7 +58,7 @@ pub const Value = struct {
             bool => if (!self.isFloat() and (self.hasTag(.true) or self.hasTag(.false))) self.hasTag(.true) else null,
             f64 => if (self.isFloat()) @bitCast(self.raw) else null,
             i48 => if (!self.isFloat() and self.hasTag(.int)) intFromRaw(self.raw) else null,
-            *String, *List, *Map, *Closure, *Fiber => if (!self.isFloat() and self.hasTag(.gc_object) and GC.isType(@typeInfo(T).Pointer.child, ptrFromRaw(self.raw))) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
+            *String, *List, *Map, *Error, *Closure, *Fiber => if (!self.isFloat() and self.hasTag(.gc_object) and GC.isType(@typeInfo(T).Pointer.child, ptrFromRaw(self.raw))) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
             *const ForeignFn => if (!self.isFloat() and self.hasTag(.foreign_fn)) @ptrCast(@alignCast(ptrFromRaw(self.raw))) else null,
             else => invalidValueTypeError(T),
         };
@@ -250,6 +251,29 @@ pub const Map = struct {
     }
 };
 
+pub const Error = struct {
+    message: *String,
+    data: ?Value,
+    stack_trace: std.ArrayListUnmanaged(TraceItem),
+
+    pub const TraceItem = struct {
+        path: []const u8,
+        location: Source.Location,
+    };
+
+    pub fn deinit(self: *Error, allocator: std.mem.Allocator) void {
+        self.stack_trace.deinit(allocator);
+        self.* = undefined;
+    }
+
+    pub fn trace(self: *const Error, tracer: *GC.Tracer) !void {
+        try tracer.trace(self.message);
+        if (self.data) |data| {
+            try data.trace(tracer);
+        }
+    }
+};
+
 pub const Closure = struct {
     chunk: *const code.Chunk,
     upvalues: []*Upvalue,
@@ -302,16 +326,22 @@ pub const Fiber = struct {
         foreign_fn: ForeignFnCallFrame,
     };
 
+    comptime {
+        _ = std.fmt.comptimePrint("size of CallFrame: {}\n", .{@sizeOf(CallFrame)});
+    }
+
     pub const ClosureCallFrame = struct {
         closure: *Closure,
         chunk: *const code.Chunk, // saves a pointer lookup each step
         ip: [*]const code.Instruction,
         bp_index: usize,
+        trace_item: Error.TraceItem,
     };
 
     pub const ForeignFnCallFrame = struct {
         foreign_fn: *const ForeignFn,
         step_index: usize = 0,
+        trace_item: Error.TraceItem,
     };
 
     pub const Step = union(enum) {
@@ -319,7 +349,7 @@ pub const Fiber = struct {
         step_fn: ForeignFn.StepFn,
     };
 
-    pub fn init(allocator: std.mem.Allocator, closure: *Closure) !Fiber {
+    pub fn init(allocator: std.mem.Allocator, closure: *Closure, trace_item: Error.TraceItem) !Fiber {
         var self = Fiber{
             .stack = try std.ArrayListUnmanaged(Value).initCapacity(allocator, default_stack_size),
             .call_stack = try std.ArrayListUnmanaged(CallFrame).initCapacity(allocator, 1),
@@ -331,6 +361,7 @@ pub const Fiber = struct {
                 .chunk = closure.chunk,
                 .ip = closure.chunk.code.ptr,
                 .bp_index = 0,
+                .trace_item = trace_item,
             },
         });
 
@@ -380,7 +411,7 @@ pub const Fiber = struct {
         return self.stack.items[self.stack.items.len - 1 - index];
     }
 
-    pub fn pushClosureFrame(self: *Fiber, allocator: std.mem.Allocator, closure: *Closure) !void {
+    pub fn pushClosureFrame(self: *Fiber, allocator: std.mem.Allocator, closure: *Closure, trace_item: Error.TraceItem) !void {
         try self.call_stack.append(allocator, .{
             .closure = .{
                 .closure = closure,
@@ -388,12 +419,18 @@ pub const Fiber = struct {
                 .ip = closure.chunk.code.ptr,
                 // FIXME: assumes arity has been checked
                 .bp_index = self.stack.items.len - closure.chunk.arity,
+                .trace_item = trace_item,
             },
         });
     }
 
-    pub fn pushForeignFnFrame(self: *Fiber, allocator: std.mem.Allocator, foreign_fn: *const ForeignFn) !void {
-        try self.call_stack.append(allocator, .{ .foreign_fn = .{ .foreign_fn = foreign_fn } });
+    pub fn pushForeignFnFrame(self: *Fiber, allocator: std.mem.Allocator, foreign_fn: *const ForeignFn, trace_item: Error.TraceItem) !void {
+        try self.call_stack.append(allocator, .{
+            .foreign_fn = .{
+                .foreign_fn = foreign_fn,
+                .trace_item = trace_item,
+            },
+        });
     }
 
     pub fn popFrame(self: *Fiber) ?CallFrame {
@@ -439,15 +476,17 @@ pub const Fiber = struct {
 test Fiber {
     const allocator = std.testing.allocator;
 
-    const chunk_one = code.Chunk{ .arity = 0, .code = &.{}, .constants = &.{}, .chunks = &.{} };
-    const chunk_two = code.Chunk{ .arity = 1, .code = &.{}, .constants = &.{}, .chunks = &.{} };
-    const chunk_three = code.Chunk{ .arity = 2, .code = &.{.{ .op = .ret }}, .constants = &.{}, .chunks = &.{} };
+    const trace_item = Error.TraceItem{ .path = "<test>", .location = .{ .line = 1, .column = 1 } };
+
+    const chunk_one = code.Chunk{ .arity = 0, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
+    const chunk_two = code.Chunk{ .arity = 1, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
+    const chunk_three = code.Chunk{ .arity = 2, .code = &.{.{ .op = .ret }}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
 
     var closure_one = Closure{ .chunk = &chunk_one, .upvalues = &.{} };
     var closure_two = Closure{ .chunk = &chunk_two, .upvalues = &.{} };
     var closure_three = Closure{ .chunk = &chunk_three, .upvalues = &.{} };
 
-    var fiber = try Fiber.init(allocator, &closure_one);
+    var fiber = try Fiber.init(allocator, &closure_one, trace_item);
     defer fiber.deinit(allocator);
 
     try fiber.push(allocator, Value.init(1));
@@ -456,7 +495,7 @@ test Fiber {
     try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
     try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
 
-    try fiber.pushClosureFrame(allocator, &closure_two);
+    try fiber.pushClosureFrame(allocator, &closure_two, trace_item);
 
     try fiber.push(allocator, Value.init(3));
 
@@ -468,7 +507,7 @@ test Fiber {
     try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
     try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
 
-    try fiber.pushClosureFrame(allocator, &closure_three);
+    try fiber.pushClosureFrame(allocator, &closure_three, trace_item);
 
     try std.testing.expectEqual(.ret, fiber.advance().?.instruction.op);
 
@@ -478,11 +517,11 @@ test Fiber {
     try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
     try std.testing.expectEqual(Value.init(4), fiber.get(2).?);
 
-    var fiber_parent = try Fiber.init(allocator, &closure_one);
+    var fiber_parent = try Fiber.init(allocator, &closure_one, trace_item);
     defer fiber_parent.deinit(allocator);
     fiber.parent = &fiber_parent;
 
-    var fiber_parent_parent = try Fiber.init(allocator, &closure_one);
+    var fiber_parent_parent = try Fiber.init(allocator, &closure_one, trace_item);
     defer fiber_parent_parent.deinit(allocator);
     fiber_parent.parent = &fiber_parent_parent;
 

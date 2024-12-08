@@ -1,13 +1,8 @@
 const std = @import("std");
 
 pub const Source = struct {
-    path: Path,
+    path: []const u8,
     content: []const u8,
-
-    pub const Path = union(enum) {
-        stdin,
-        file: []const u8,
-    };
 
     pub const Location = struct {
         line: usize,
@@ -41,7 +36,7 @@ pub const Source = struct {
 
 test Source {
     const source = Source{
-        .path = .{ .file = "test.txt" },
+        .path = "test.txt",
         .content = "lorem ipsum dolor sit amet\nconsectetur adipiscing elit",
     };
 

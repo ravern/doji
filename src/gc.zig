@@ -7,6 +7,7 @@ pub const GC = GarbageCollector(union {
     string: value.String,
     list: value.List,
     map: value.Map,
+    err: value.Error,
     closure: value.Closure,
     fiber: value.Fiber,
     // non-values

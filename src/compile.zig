@@ -18,8 +18,6 @@ pub const Result = struct {
 };
 
 pub fn compile(ctx: Context, source: *const Source) !Result {
-    _ = source;
-
     const insts = [_]code.Instruction{
         .{ .op = .int, .arg = 5 },
         .{ .op = .foreign_fn, .arg = 0 },
@@ -42,6 +40,7 @@ pub fn compile(ctx: Context, source: *const Source) !Result {
         .code = try ctx.allocator.dupe(code.Instruction, &insts),
         .constants = try ctx.allocator.dupe(Value, &constants),
         .chunks = try ctx.allocator.dupe(*const code.Chunk, &chunks),
+        .trace_items = .{ .path = source.path, .locations = &.{} },
     };
 
     return .{
