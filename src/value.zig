@@ -72,7 +72,7 @@ pub const Value = struct {
         if (left.raw != right.raw) {
             if (left.cast(*String)) |left_string| {
                 if (right.cast(*String)) |right_string| {
-                    return std.mem.eql(u8, left_string.data, right_string.data);
+                    return String.eql(left_string, right_string);
                 }
             }
         }
@@ -217,6 +217,10 @@ pub const String = struct {
         allocator.free(self.data);
         self.* = undefined;
     }
+
+    pub fn eql(left: *String, right: *String) bool {
+        return std.mem.eql(u8, left.data, right.data);
+    }
 };
 
 pub const List = struct {
@@ -336,6 +340,10 @@ pub const Fiber = struct {
         ip: [*]const code.Instruction,
         bp_index: usize,
         trace_item: Error.TraceItem,
+
+        pub fn getIPIndex(self: *const @This()) usize {
+            return (@intFromPtr(self.ip) - @intFromPtr(self.chunk.code.ptr)) / @sizeOf(code.Instruction);
+        }
     };
 
     pub const ForeignFnCallFrame = struct {
@@ -403,7 +411,7 @@ pub const Fiber = struct {
     }
 
     pub fn get(self: *const Fiber, index: usize) ?Value {
-        const frame = self.getCurrentLocalFrame() orelse return null;
+        const frame = self.getCurrentClosureFrame() orelse return null;
         return self.stack.items[frame.bp_index + index];
     }
 
@@ -439,7 +447,7 @@ pub const Fiber = struct {
     }
 
     pub fn getConstant(self: *const Fiber, index: usize) ?Value {
-        const frame = self.getCurrentLocalFrame() orelse return null;
+        const frame = self.getCurrentClosureFrame() orelse return null;
         return frame.closure.chunk.constants[index];
     }
 
@@ -447,11 +455,13 @@ pub const Fiber = struct {
         const frame = self.getCurrentFrame();
         switch (frame.*) {
             .closure => {
+                if (frame.closure.chunk.code.len == 0) return null;
                 const inst = frame.closure.ip[0];
                 frame.closure.ip += 1;
                 return Step{ .instruction = inst };
             },
             .foreign_fn => {
+                if (frame.foreign_fn.foreign_fn.step_fns.len == 0) return null;
                 const step_fn = frame.foreign_fn.foreign_fn.step_fns[frame.foreign_fn.step_index];
                 frame.foreign_fn.step_index += 1;
                 return Step{ .step_fn = step_fn };
@@ -459,7 +469,19 @@ pub const Fiber = struct {
         }
     }
 
-    inline fn getCurrentLocalFrame(self: *const Fiber) ?*ClosureCallFrame {
+    pub fn getCurrentTraceItem(self: *const Fiber) ?Error.TraceItem {
+        const frame = self.getCurrentFrame();
+        return switch (frame.*) {
+            // TODO: potential out-of-bounds?
+            .closure => .{
+                .path = frame.closure.chunk.trace_items.path,
+                .location = frame.closure.chunk.trace_items.locations[frame.closure.getIPIndex() - 1],
+            },
+            .foreign_fn => frame.foreign_fn.foreign_fn.trace_items[frame.foreign_fn.step_index - 1],
+        };
+    }
+
+    inline fn getCurrentClosureFrame(self: *const Fiber) ?*ClosureCallFrame {
         const frame = self.getCurrentFrame();
         switch (frame.*) {
             .closure => return &frame.closure,
@@ -476,7 +498,7 @@ pub const Fiber = struct {
 test Fiber {
     const allocator = std.testing.allocator;
 
-    const trace_item = Error.TraceItem{ .path = "<test>", .location = .{ .line = 1, .column = 1 } };
+    const trace_item = Error.TraceItem{ .path = "<test>", .location = Source.Location.zero };
 
     const chunk_one = code.Chunk{ .arity = 0, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
     const chunk_two = code.Chunk{ .arity = 1, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
@@ -531,6 +553,7 @@ test Fiber {
 pub const ForeignFn = struct {
     arity: usize,
     step_fns: []const StepFn,
+    trace_items: []const Error.TraceItem,
 
     pub const StepFn = *const fn (ctx: Context) anyerror!Result;
 

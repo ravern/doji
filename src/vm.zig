@@ -1,6 +1,6 @@
 const std = @import("std");
 const code = @import("code.zig");
-const compile = @import("compile.zig").compile;
+const compile = @import("compile.zig");
 const GC = @import("gc.zig").GC;
 const MockMutator = @import("gc.zig").MockMutator;
 const Value = @import("value.zig").Value;
@@ -20,6 +20,7 @@ pub const VM = struct {
     gc: GC,
     fiber: *Fiber,
     string_pool: StringPool,
+    globals: std.ArrayList(*String),
     foreign_fn_registry: ForeignFnRegistry,
 
     pub const Error = error{
@@ -46,6 +47,7 @@ pub const VM = struct {
             .gc = GC.init(allocator, self.mutator()),
             .fiber = undefined,
             .string_pool = undefined,
+            .globals = std.ArrayList(*String).init(self.allocator),
             .foreign_fn_registry = ForeignFnRegistry.init(self.allocator),
         };
 
@@ -66,21 +68,29 @@ pub const VM = struct {
     }
 
     pub fn evaluate(self: *VM, source: *const Source) !Value {
-        const compile_result = try compile(
-            .{
-                .allocator = self.allocator,
-                .gc = &self.gc,
-                .string_pool = &self.string_pool,
-                .globals = &.{},
-            },
-            source,
-        );
+        var compile_ctx = compile.Context{
+            .allocator = self.allocator,
+            .gc = &self.gc,
+            .string_pool = &self.string_pool,
+            .globals = &self.globals,
+            .source = source,
+        };
+        var compile_err: compile.Error = undefined;
+        const chunk = compile.compile(&compile_ctx, &compile_err) catch |err| {
+            switch (err) {
+                error.CompileFailed => {
+                    // TODO: transform compile error into error value
+                    unreachable;
+                },
+                else => return err,
+            }
+        };
 
         const root_closure = try self.gc.create(Closure);
-        root_closure.* = .{ .chunk = compile_result.chunk, .upvalues = &.{} };
+        root_closure.* = .{ .chunk = chunk, .upvalues = &.{} };
 
         self.fiber = try self.gc.create(Fiber);
-        self.fiber.* = try Fiber.init(self.allocator, root_closure, .{ .path = source.path, .location = .{ .line = 1, .column = 1 } });
+        self.fiber.* = try Fiber.init(self.allocator, root_closure, .{ .path = "vm.zig", .location = Source.Location.zero });
 
         while (true) {
             const step = self.fiber.advance() orelse return Error.CorruptedBytecode;
@@ -88,10 +98,9 @@ pub const VM = struct {
                 .instruction => |inst| switch (inst.op) {
                     .nop => {},
 
-                    .int => {
-                        const value = Value.init(@as(i48, @intCast(inst.arg)));
-                        try self.fiber.push(self.allocator, value);
-                    },
+                    .true => try self.fiber.push(self.allocator, Value.init(true)),
+                    .false => try self.fiber.push(self.allocator, Value.init(false)),
+                    .int => try self.fiber.push(self.allocator, Value.init(@as(i48, @intCast(inst.arg)))),
                     .constant => {
                         const value = self.fiber.getConstant(@intCast(inst.arg)) orelse return Error.CorruptedBytecode;
                         try self.fiber.push(self.allocator, value);
@@ -129,7 +138,8 @@ pub const VM = struct {
                         .call => {
                             const closure_value = self.fiber.getFromTop(result.call) orelse return Error.TODO;
                             const closure = closure_value.cast(*Closure) orelse return Error.TODO;
-                            try self.fiber.pushClosureFrame(self.allocator, closure, .{ .path = "<call>", .location = .{ .line = 1, .column = 1 } });
+                            const trace_item = self.fiber.getCurrentTraceItem() orelse return Error.CorruptedBytecode;
+                            try self.fiber.pushClosureFrame(self.allocator, closure, trace_item);
                         },
                     }
                 },
@@ -147,9 +157,10 @@ pub const VM = struct {
 
     fn call(self: *VM, arity: usize) !void {
         const callable = self.fiber.getFromTop(arity) orelse return Error.CorruptedBytecode;
+        const trace_item = self.fiber.getCurrentTraceItem() orelse return Error.CorruptedBytecode;
         if (callable.cast(*const ForeignFn)) |foreign_fn| {
             if (foreign_fn.arity != arity) return Error.TODO;
-            try self.fiber.pushForeignFnFrame(self.allocator, foreign_fn, .{ .path = "<call>", .location = .{ .line = 1, .column = 1 } });
+            try self.fiber.pushForeignFnFrame(self.allocator, foreign_fn, trace_item);
         } else {
             return Error.CorruptedBytecode;
         }
@@ -200,18 +211,18 @@ test VM {
 
     try vm.registerForeignFn("add", prelude.add_foreign_fn);
 
-    const result = try vm.evaluate(&.{ .path = "<stdin>", .content = "" });
-    try std.testing.expectEqual(-57, result.cast(i48).?);
+    const result = try vm.evaluate(&.{ .path = "<stdin>", .content = "123" });
+    try std.testing.expectEqual(123, result.cast(i48).?);
 }
 
 pub const StringPool = struct {
     gc: *GC,
-    data: std.StringHashMap(Value),
+    data: std.StringHashMap(*String),
 
     pub fn init(allocator: std.mem.Allocator, gc: *GC) StringPool {
         return .{
             .gc = gc,
-            .data = std.StringHashMap(Value).init(allocator),
+            .data = std.StringHashMap(*String).init(allocator),
         };
     }
 
@@ -219,12 +230,11 @@ pub const StringPool = struct {
         self.data.deinit();
     }
 
-    pub fn intern(self: *StringPool, str: []const u8) !Value {
+    pub fn intern(self: *StringPool, str: []const u8) !*String {
         const result = try self.data.getOrPut(str);
         if (!result.found_existing) {
-            const string = try self.gc.create(String);
-            string.* = String.init(str);
-            result.value_ptr.* = Value.init(string);
+            result.value_ptr.* = try self.gc.create(String);
+            result.value_ptr.*.* = String.init(str);
         }
         return result.value_ptr.*;
     }
@@ -242,12 +252,12 @@ test StringPool {
     var pool = StringPool.init(allocator, &gc);
     defer pool.deinit();
 
-    const value_one = try pool.intern("one");
-    const value_two = try pool.intern("one");
-    const value_three = try pool.intern("three");
+    const string_one = try pool.intern("one");
+    const string_two = try pool.intern("one");
+    const string_three = try pool.intern("three");
 
-    try std.testing.expect(Value.eql(value_one, value_two));
-    try std.testing.expect(!Value.eql(value_one, value_three));
+    try std.testing.expect(String.eql(string_one, string_two));
+    try std.testing.expect(!String.eql(string_one, string_three));
 }
 
 pub const ForeignFnRegistry = struct {

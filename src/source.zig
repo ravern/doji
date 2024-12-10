@@ -7,14 +7,18 @@ pub const Source = struct {
     pub const Location = struct {
         line: usize,
         column: usize,
+
+        pub const zero = .{ .line = 1, .column = 1 };
     };
 
     pub const Span = struct {
         offset: usize,
         len: usize,
+
+        pub const zero = .{ .offset = 0, .len = 0 };
     };
 
-    fn getLocation(self: *const Source, offset: usize) Location {
+    pub fn getLocation(self: *const Source, offset: usize) Location {
         var line: usize = 1;
         var column: usize = 1;
         for (self.content[0..offset]) |c| {
@@ -29,7 +33,7 @@ pub const Source = struct {
         return .{ .line = line, .column = column };
     }
 
-    fn getSlice(self: *const Source, span: Span) []const u8 {
+    pub fn getSlice(self: *const Source, span: Span) []const u8 {
         return self.content[span.offset .. span.offset + span.len];
     }
 };
