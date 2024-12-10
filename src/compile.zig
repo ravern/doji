@@ -21,6 +21,12 @@ pub const Context = struct {
     source: *const Source,
 };
 
+// TODO: remove this
+//
+// allocator, gc, string_pool -> via foreign fn ctx
+// globals -> empty
+// source -> via resolver
+
 pub fn compile(ctx: *Context, err: *Error) !*code.Chunk {
     var parser = Parser.init(ctx, err);
     var block = try parser.parse();

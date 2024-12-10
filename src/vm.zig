@@ -12,8 +12,10 @@ const Closure = @import("value.zig").Closure;
 const Upvalue = @import("value.zig").Upvalue;
 const Fiber = @import("value.zig").Fiber;
 const ForeignFn = @import("value.zig").ForeignFn;
-const Source = @import("source.zig").Source;
 const prelude = @import("prelude.zig");
+const Resolver = @import("resolver.zig").Resolver;
+const MockResolver = @import("resolver.zig").MockResolver;
+const Source = @import("source.zig").Source;
 
 pub const VM = struct {
     allocator: std.mem.Allocator,
@@ -22,6 +24,7 @@ pub const VM = struct {
     string_pool: StringPool,
     globals: std.ArrayList(*String),
     foreign_fn_registry: ForeignFnRegistry,
+    resolver: Resolver,
 
     pub const Error = error{
         OutOfMemory,
@@ -40,7 +43,7 @@ pub const VM = struct {
         };
     }
 
-    pub fn init(allocator: std.mem.Allocator) !*VM {
+    pub fn init(allocator: std.mem.Allocator, resolver: Resolver) !*VM {
         var self = try allocator.create(VM);
         self.* = .{
             .allocator = allocator,
@@ -49,6 +52,7 @@ pub const VM = struct {
             .string_pool = undefined,
             .globals = std.ArrayList(*String).init(self.allocator),
             .foreign_fn_registry = ForeignFnRegistry.init(self.allocator),
+            .resolver = resolver,
         };
 
         self.string_pool = StringPool.init(self.allocator, &self.gc);
@@ -206,7 +210,9 @@ pub const VM = struct {
 test VM {
     const allocator = std.testing.allocator;
 
-    var vm = try VM.init(allocator);
+    var resolver = MockResolver{};
+
+    var vm = try VM.init(allocator, resolver.resolver());
     defer vm.deinit();
 
     try vm.registerForeignFn("add", prelude.add_foreign_fn);
