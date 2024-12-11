@@ -23,42 +23,68 @@ pub const Parser = struct {
     }
 
     pub fn parse(self: *Parser) !ast.Block {
-        var expressions = try self.ctx.allocator.alloc(ast.Expression, 1);
-        expressions[0] = try self.parseExpression();
-        return .{ .expressions = expressions, .span = .{ .offset = 0, .len = self.ctx.source.content.len } };
+        return .{
+            .statements = try self.parseBlockStatements(.end_of_input),
+            .span = .{ .offset = 0, .len = self.ctx.source.content.len },
+        };
+    }
+
+    fn parseBlockStatements(self: *Parser, term_ty: Token.Type) ![]ast.Statement {
+        var statements = std.ArrayList(ast.Statement).init(self.ctx.allocator);
+        while (true) {
+            const token = try self.peek();
+            if (token.ty == term_ty) break;
+            const statement = switch (token.ty) {
+                else => {
+                    const expression = try self.parseExpression();
+                    const token2 = try self.peek();
+                    if (token2.ty != .semicolon and token2.ty != term_ty) {
+                        return self.parseError([]ast.Statement, token, &.{.{ .token = .semicolon }});
+                    }
+                    try statements.append(.{ .expression = expression });
+                    continue;
+                },
+            };
+            try statements.append(statement);
+        }
+        return statements.toOwnedSlice();
     }
 
     fn parseExpression(self: *Parser) !ast.Expression {
         const token = try self.peek();
-        switch (token.ty) {
-            .identifier => return .{ .identifier = try self.parseIdentifier(token) },
-            .int, .float, .true, .false => return .{ .literal = try self.parseLiteral(token) },
-            else => return self.parseError(ast.Expression, token, &.{.expression}),
-        }
+        return switch (token.ty) {
+            .identifier => .{ .identifier = try self.parseIdentifier() },
+            .int, .float, .true, .false => .{ .literal = try self.parseLiteral() },
+            else => self.parseError(ast.Expression, token, &.{.expression}),
+        };
     }
 
-    fn parseIdentifier(self: *Parser, token: Token) !ast.Identifier {
+    fn parseIdentifier(self: *Parser) !ast.Identifier {
+        const token = try self.expect(.identifier);
         const identifier = try self.ctx.string_pool.intern(self.ctx.source.getSlice(token.span));
         return .{ .identifier = identifier, .span = token.span };
     }
 
-    fn parseLiteral(self: *Parser, token: Token) !ast.Literal {
+    fn parseLiteral(self: *Parser) !ast.Literal {
+        const token = try self.peek();
+        self.advance();
         const str = self.ctx.source.getSlice(token.span);
-        switch (token.ty) {
-            .int => return .{ .int = .{ .value = try std.fmt.parseInt(i48, str, 10), .span = token.span } },
-            .float => return .{ .float = .{ .value = try std.fmt.parseFloat(f64, str), .span = token.span } },
-            .true => return .{ .true = token.span },
-            .false => return .{ .false = token.span },
+        return switch (token.ty) {
+            .int => .{ .int = .{ .value = try std.fmt.parseInt(i48, str, 10), .span = token.span } },
+            .float => .{ .float = .{ .value = try std.fmt.parseFloat(f64, str), .span = token.span } },
+            .true => .{ .true = token.span },
+            .false => .{ .false = token.span },
             else => unreachable,
-        }
+        };
     }
 
-    fn expect(self: *Parser, token_ty: Token.Type) !void {
+    fn expect(self: *Parser, token_ty: Token.Type) !Token {
         const token = try self.peek();
         if (token.ty != token_ty) {
-            return self.errorUnexpectedToken(token);
+            return self.parseError(Token, token, &.{.{ .token = token_ty }});
         }
         self.advance();
+        return token;
     }
 
     fn parseError(self: *Parser, comptime T: type, unexpected: Token, expected: []const ParseError.Item) !T {

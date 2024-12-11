@@ -11,7 +11,7 @@ pub fn generate(ctx: *compile.Context, block: *const ast.Block) !*code.Chunk {
     var frame = Frame.init(ctx.allocator, ctx.gc);
     defer frame.deinit();
 
-    try generateExpression(ctx, &frame, &block.expressions[0]);
+    try generateExpression(ctx, &frame, &block.statements[0].expression);
     try frame.appendInstruction(.ret, ctx.source.getLocation(block.span.offset + block.span.len));
 
     return frame.toOwnedChunk(0, ctx.source.path);

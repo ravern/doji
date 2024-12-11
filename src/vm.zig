@@ -83,6 +83,7 @@ pub const VM = struct {
         const chunk = compile.compile(&compile_ctx, &compile_err) catch |err| {
             switch (err) {
                 error.CompileFailed => {
+                    std.debug.print("compile error: unexpected: {any}, expected: {any}\n", .{ compile_err.data.parse.unexpected, compile_err.data.parse.expected });
                     // TODO: transform compile error into error value
                     unreachable;
                 },
