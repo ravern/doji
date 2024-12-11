@@ -42,10 +42,40 @@ pub const Instruction = packed struct {
         constant,
         foreign_fn,
 
+        pop,
+        dup,
+        load,
+        store,
+
+        upvalue_load,
+        upvalue_store,
+        upvalue_close,
+
         add,
         sub,
         mul,
         div,
+        rem,
+        bit_and,
+        bit_or,
+        bit_xor,
+        bit_not,
+        shl,
+        shr,
+        log_and,
+        log_or,
+
+        neg,
+        log_not,
+
+        import,
+
+        fiber_spawn,
+        fiber_resume,
+        fiber_yield,
+
+        object_get,
+        object_set,
 
         is_error,
 

@@ -1,14 +1,12 @@
 const std = @import("std");
 const code = @import("code.zig");
-const GC = @import("gc.zig").GC;
 const EmptyMutator = @import("gc.zig").MockMutator;
-const StringPool = @import("vm.zig").StringPool;
+const GC = @import("root.zig").GC;
 const Source = @import("source.zig").Source;
+const StringPool = @import("vm.zig").StringPool;
 
 pub const Value = struct {
     raw: u64,
-
-    const q_nan: u64 = 0x7ffc000000000000;
 
     const Tag = enum(u64) {
         nil = 0x0000000000000000,
@@ -21,6 +19,9 @@ pub const Value = struct {
         const num_bits_prefix = 1;
         const num_bits_suffix = 2;
     };
+
+    const q_nan: u64 = 0x7ffc000000000000;
+    const tag_mask: u64 = 0x8000000000000003;
 
     const HashMapContext = struct {
         pub fn hash(self: HashMapContext, value: Value) u64 {
@@ -121,7 +122,7 @@ pub const Value = struct {
     }
 
     inline fn hasTag(self: Value, tag: Tag) bool {
-        return (self.raw & @intFromEnum(tag)) == @intFromEnum(tag);
+        return (self.raw & tag_mask) == @intFromEnum(tag);
     }
 
     inline fn rawFromInt(int: i48) u64 {
@@ -147,6 +148,18 @@ pub const Value = struct {
     inline fn dataFromRaw(raw: u64) u48 {
         return @truncate(raw >> Tag.num_bits_suffix);
     }
+
+    pub fn format(self: Value, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (self.cast(bool)) |b| {
+            try writer.print("{}", .{b});
+        } else if (self.cast(i48)) |int| {
+            try writer.print("{d}", .{int});
+        } else if (self.cast(f64)) |float| {
+            try writer.print("{d}", .{float});
+        } else {
+            try writer.print("{}", .{self.raw});
+        }
+    }
 };
 
 fn invalidValueTypeError(comptime T: type) noreturn {
@@ -156,17 +169,17 @@ fn invalidValueTypeError(comptime T: type) noreturn {
 test Value {
     const allocator = std.testing.allocator;
 
-    var mutator = try EmptyMutator.init(allocator);
-    defer mutator.deinit(allocator);
-
-    var gc = GC.init(allocator, mutator.mutator());
+    var gc = GC.init(allocator);
     defer gc.deinit();
 
-    const string: *String = try gc.create(String);
-    const list: *List = try gc.create(List);
-    const map: *Map = try gc.create(Map);
-    const fiber: *Fiber = try gc.create(Fiber);
-
+    const string = try gc.create(String);
+    string.* = String.init("");
+    const list = try gc.create(List);
+    list.* = List.init();
+    const map = try gc.create(Map);
+    map.* = Map.init();
+    const fiber = try gc.create(Fiber);
+    fiber.* = Fiber.initEmpty();
     const foreign_fn: ForeignFn = undefined;
 
     // positive tests
@@ -181,11 +194,8 @@ test Value {
     try std.testing.expectEqual(-2.71828, Value.init(-2.71828).cast(f64).?);
 
     try std.testing.expectEqual(string, Value.init(string).cast(*String).?);
-
     try std.testing.expectEqual(list, Value.init(list).cast(*List).?);
-
     try std.testing.expectEqual(map, Value.init(map).cast(*Map).?);
-
     try std.testing.expectEqual(fiber, Value.init(fiber).cast(*Fiber).?);
 
     try std.testing.expectEqual(&foreign_fn, Value.init(&foreign_fn).cast(*const ForeignFn).?);
@@ -224,7 +234,11 @@ pub const String = struct {
 };
 
 pub const List = struct {
-    data: std.ArrayListUnmanaged(Value),
+    data: std.ArrayListUnmanaged(Value) = .{},
+
+    pub fn init() List {
+        return .{};
+    }
 
     pub fn deinit(self: *List, allocator: std.mem.Allocator) void {
         self.data.deinit(allocator);
@@ -239,7 +253,11 @@ pub const List = struct {
 };
 
 pub const Map = struct {
-    data: std.HashMapUnmanaged(Value, Value, Value.HashMapContext, 80),
+    data: std.HashMapUnmanaged(Value, Value, Value.HashMapContext, 80) = .{},
+
+    pub fn init() Map {
+        return .{};
+    }
 
     pub fn deinit(self: *Map, allocator: std.mem.Allocator) void {
         self.data.deinit(allocator);
@@ -265,9 +283,21 @@ pub const Error = struct {
         location: Source.Location,
     };
 
+    pub fn init(allocator: std.mem.Allocator, message: *String, data: ?Value) !Error {
+        return .{
+            .message = message,
+            .data = data,
+            .stack_trace = try std.ArrayListUnmanaged(TraceItem).initCapacity(allocator, 10),
+        };
+    }
+
     pub fn deinit(self: *Error, allocator: std.mem.Allocator) void {
         self.stack_trace.deinit(allocator);
         self.* = undefined;
+    }
+
+    pub fn addTraceItem(self: *Error, allocator: std.mem.Allocator, item: TraceItem) !void {
+        try self.stack_trace.append(allocator, item);
     }
 
     pub fn trace(self: *const Error, tracer: *GC.Tracer) !void {
@@ -281,6 +311,10 @@ pub const Error = struct {
 pub const Closure = struct {
     chunk: *const code.Chunk,
     upvalues: []*Upvalue,
+
+    pub fn init(chunk: *const code.Chunk, upvalues: []*Upvalue) !Closure {
+        return .{ .chunk = chunk, .upvalues = upvalues };
+    }
 
     pub fn deinit(self: *Closure, allocator: std.mem.Allocator) void {
         allocator.free(self.upvalues);
@@ -299,6 +333,11 @@ pub const Upvalue = struct {
     value: *Value,
     closed_value: Value = Value.nil,
     next: ?*Upvalue = null,
+
+    pub fn deinit(self: *Upvalue, allocator: std.mem.Allocator) void {
+        _ = allocator;
+        self.* = undefined;
+    }
 
     pub fn trace(self: *const Upvalue, tracer: *GC.Tracer) !void {
         try self.value.trace(tracer);
@@ -319,8 +358,8 @@ test Upvalue {
 }
 
 pub const Fiber = struct {
-    stack: std.ArrayListUnmanaged(Value),
-    call_stack: std.ArrayListUnmanaged(CallFrame),
+    stack: std.ArrayListUnmanaged(Value) = .{},
+    call_stack: std.ArrayListUnmanaged(CallFrame) = .{},
     parent: ?*Fiber = null,
 
     const default_stack_size = 1024;
@@ -329,10 +368,6 @@ pub const Fiber = struct {
         closure: ClosureCallFrame,
         foreign_fn: ForeignFnCallFrame,
     };
-
-    comptime {
-        _ = std.fmt.comptimePrint("size of CallFrame: {}\n", .{@sizeOf(CallFrame)});
-    }
 
     pub const ClosureCallFrame = struct {
         closure: *Closure,
@@ -356,6 +391,10 @@ pub const Fiber = struct {
         instruction: code.Instruction,
         step_fn: ForeignFn.StepFn,
     };
+
+    pub fn initEmpty() Fiber {
+        return .{};
+    }
 
     pub fn init(allocator: std.mem.Allocator, closure: *Closure, trace_item: Error.TraceItem) !Fiber {
         var self = Fiber{

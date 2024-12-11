@@ -2,93 +2,18 @@ const std = @import("std");
 const code = @import("code.zig");
 const value = @import("value.zig");
 
-pub const GC = GarbageCollector(union {
-    // values
-    string: value.String,
-    list: value.List,
-    map: value.Map,
-    err: value.Error,
-    closure: value.Closure,
-    fiber: value.Fiber,
-    // non-values
-    chunk: code.Chunk,
-    upvalue: value.Upvalue,
-});
-
-pub fn GarbageCollector(
-    // union of all the types allowed by this gc instance (max 255 types). this type won't actually be used, but instead
-    // be converted into an [ObjectTag] type which has all the same field names. [ObjectTag] comes in handy when trying
-    // to decipher what is the type of an [*anyopaque].
-    comptime Object: type,
-) type {
+pub fn GC(comptime Object: type) type {
     return struct {
         const Self = @This();
 
         allocator: std.mem.Allocator,
-        mutator: Mutator,
         objects: ObjectList = .{},
+        root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{}, // may contain unrooted objects
         gray_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
+        colors: Colors = .{},
 
-        colors: struct {
-            white: u8 = 0,
-            black: u8 = 1,
-            gray: u8 = 2,
-        } = .{},
-
-        pub const Error = std.mem.Allocator.Error;
-
-        pub const ObjectTag = TagFromObject(Object);
-
-        const default_color = 0;
-
-        const ObjectHeader = packed struct {
-            color: u8,
-            tag: ObjectTag,
-            next_ptr: u48 = 0,
-
-            fn getNext(self: *ObjectHeader) ?*ObjectHeader {
-                return @as(?*ObjectHeader, @ptrFromInt(self.next_ptr));
-            }
-
-            fn setNext(self: *ObjectHeader, object_header: ?*ObjectHeader) void {
-                if (object_header) |header| {
-                    self.next_ptr = @intCast(@intFromPtr(header));
-                } else {
-                    self.next_ptr = 0;
-                }
-            }
-        };
-
-        const object_size_map = createObjectSizeMap(Object);
-
-        const object_align = @max(@alignOf(ObjectHeader), findMaxAlign(Object));
-        const object_log2_align = std.math.log2_int(usize, object_align);
-        const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
-
-        const ObjectList = struct {
-            first: ?*ObjectHeader = null,
-
-            fn popFirst(self: *ObjectList) ?*ObjectHeader {
-                const object_header = self.first orelse return null;
-                self.first = object_header.getNext();
-                return object_header;
-            }
-
-            fn prepend(self: *ObjectList, object_header: *ObjectHeader) void {
-                object_header.setNext(self.first);
-                self.first = object_header;
-            }
-        };
-
-        pub const Mutator = struct {
-            ptr: *anyopaque,
-            vtable: *const VTable,
-
-            pub const VTable = struct {
-                mark_roots: *const fn (ctx: *anyopaque, gc: *Self) Error!void,
-                trace: *const fn (ctx: *anyopaque, tracer: *Tracer, tag: ObjectTag, data: *anyopaque) Error!void,
-                finalize: *const fn (ctx: *anyopaque, tag: ObjectTag, data: *anyopaque) void,
-            };
+        pub const Error = error{
+            OutOfMemory,
         };
 
         pub const Tracer = struct {
@@ -111,12 +36,18 @@ pub fn GarbageCollector(
             }
         };
 
-        pub fn init(allocator: std.mem.Allocator, mutator: Mutator) Self {
-            return Self{ .allocator = allocator, .mutator = mutator };
+        const object_size_map = createObjectSizeMap(Object);
+        const object_align = @max(@alignOf(ObjectHeader), findMaxAlign(Object));
+        const object_log2_align = std.math.log2_int(usize, object_align);
+        const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
+
+        pub fn init(allocator: std.mem.Allocator) Self {
+            return Self{ .allocator = allocator };
         }
 
         pub fn deinit(self: *Self) void {
             self.destroyObjectList(&self.objects);
+            self.root_set.deinit(self.allocator);
             self.gray_set.deinit(self.allocator);
             self.* = undefined;
         }
@@ -142,6 +73,17 @@ pub fn GarbageCollector(
             return object_data;
         }
 
+        pub fn root(self: *Self, object_data: *anyopaque) !void {
+            const object_header = headerFromData(object_data);
+            object_header.is_root = true;
+            try self.root_set.append(self.allocator, object_header);
+        }
+
+        pub fn unroot(object_data: *anyopaque) void {
+            const object_header = headerFromData(object_data);
+            object_header.is_root = false;
+        }
+
         pub fn mark(self: *Self, object_data: *anyopaque) !void {
             const object_header = headerFromData(object_data);
             if (object_header.color == self.colors.gray) return;
@@ -150,24 +92,53 @@ pub fn GarbageCollector(
         }
 
         pub fn collect(self: *Self) !void {
-            try self.mutator.vtable.mark_roots(self.mutator.ptr, self);
+            try self.markRoots();
             while (self.gray_set.popOrNull()) |object_header| {
                 try self.blacken(object_header);
             }
             try self.sweep();
-            self.swapWhiteBlack();
+            self.colors.swapWhiteBlack();
+        }
+
+        fn markRoots(self: *Self) !void {
+            var index: usize = 0;
+            var end_index: usize = self.root_set.items.len;
+            while (index < end_index) {
+                if (self.root_set.items[index].is_root) {
+                    try self.mark(dataFromHeader(self.root_set.items[index]));
+                    index += 1;
+                } else {
+                    _ = self.root_set.swapRemove(index);
+                    end_index -= 1;
+                }
+            }
         }
 
         fn blacken(self: *Self, object_header: *ObjectHeader) !void {
             var tracer = Tracer{ .gc = self, .action = .mark };
-            const object_data = dataFromHeader(object_header);
-            try self.mutator.vtable.trace(self.mutator.ptr, &tracer, object_header.tag, object_data);
+            inline for (getUnionFields(Object), 0..) |field, index| {
+                if (object_header.tag == index) {
+                    try @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))).trace(&tracer);
+                }
+            }
             object_header.color = self.colors.black;
         }
 
         fn sweep(self: *Self) !void {
-            var white_set = ObjectList{};
+            // sweep the root set for unrooted objects
+            var index: usize = 0;
+            var end_index: usize = self.root_set.items.len;
+            while (index < end_index) {
+                if (self.root_set.items[index].is_root) {
+                    index += 1;
+                } else {
+                    _ = self.root_set.swapRemove(index);
+                    end_index -= 1;
+                }
+            }
 
+            // sweep the entire objects list for white objects
+            var white_set = ObjectList{};
             var prev_object_header: ?*ObjectHeader = null;
             var curr_object_header = self.objects.first;
             while (curr_object_header) |curr| {
@@ -185,14 +156,17 @@ pub fn GarbageCollector(
                     curr_object_header = curr.getNext();
                 }
             }
-
             self.destroyObjectList(&white_set);
         }
 
         fn destroyObjectList(self: *const Self, objects: *ObjectList) void {
             var curr_object_header = objects.first;
             while (curr_object_header) |object_header| : (curr_object_header = object_header.getNext()) {
-                self.mutator.vtable.finalize(self.mutator.ptr, object_header.tag, dataFromHeader(object_header));
+                inline for (getUnionFields(Object), 0..) |field, index| {
+                    if (object_header.tag == index) {
+                        @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))).deinit(self.allocator);
+                    }
+                }
             }
             while (objects.popFirst()) |object_header| {
                 self.destroyObjectHeader(object_header);
@@ -200,14 +174,8 @@ pub fn GarbageCollector(
         }
 
         fn destroyObjectHeader(self: *const Self, object_header: *ObjectHeader) void {
-            const total_len = object_header_len + object_size_map.get(object_header.tag);
+            const total_len = object_header_len + object_size_map[object_header.tag];
             self.allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
-        }
-
-        fn swapWhiteBlack(self: *Self) void {
-            const tmp = self.colors.white;
-            self.colors.white = self.colors.black;
-            self.colors.black = tmp;
         }
 
         fn headerFromData(ptr: *anyopaque) *ObjectHeader {
@@ -220,7 +188,7 @@ pub fn GarbageCollector(
     };
 }
 
-test GarbageCollector {
+test GC {
     const TestResult = struct {
         freed_objects: std.StringHashMap(void),
 
@@ -254,9 +222,18 @@ test GarbageCollector {
             return Self{ .result = result, .key = key, .refs = std.StringHashMap(*Self).init(allocator) };
         }
 
-        fn deinit(self: *Self) void {
+        fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+            _ = allocator;
             self.result.putFreedObject(self.key);
             self.refs.deinit();
+            self.* = undefined;
+        }
+
+        fn trace(self: *Self, tracer: anytype) !void {
+            var it = self.refs.valueIterator();
+            while (it.next()) |child_object| {
+                try tracer.trace(child_object.*);
+            }
         }
 
         fn addRef(self: *Self, child_object: *Self) !void {
@@ -268,134 +245,79 @@ test GarbageCollector {
         }
     };
 
-    const Object = union { test_object: TestObject };
-    const TestGC = GarbageCollector(Object);
+    const TestGC = GC(union { test_object: TestObject });
 
-    const TestMutator = struct {
-        allocator: std.mem.Allocator,
-        gc: TestGC,
-        root_object: *TestObject,
+    const allocator = std.testing.allocator;
 
-        const Self = @This();
-
-        fn mutator(self: *Self) TestGC.Mutator {
-            return .{
-                .ptr = self,
-                .vtable = &.{
-                    .mark_roots = markRoots,
-                    .trace = traceObject,
-                    .finalize = finalizeObject,
-                },
-            };
-        }
-
-        fn init(allocator: std.mem.Allocator, result: *TestResult) !*Self {
-            var self = try allocator.create(Self);
-            self.* = .{ .allocator = allocator, .gc = undefined, .root_object = undefined };
-
-            self.gc = TestGC.init(allocator, self.mutator());
-
-            self.root_object = try self.gc.create(TestObject);
-            self.root_object.* = TestObject.init(self.allocator, "__root__", result);
-
-            return self;
-        }
-
-        fn deinit(self: *Self) void {
-            self.gc.deinit();
-            self.allocator.destroy(self);
-        }
-
-        fn markRoots(ctx: *anyopaque, gc: *TestGC) !void {
-            const self = @as(*Self, @ptrCast(@alignCast(ctx)));
-
-            try gc.mark(self.root_object);
-        }
-
-        fn traceObject(ctx: *anyopaque, tracer: *TestGC.Tracer, object_tag: TestGC.ObjectTag, object_data: *anyopaque) !void {
-            _ = ctx;
-            _ = object_tag;
-
-            const object = @as(*TestObject, @ptrCast(@alignCast(object_data)));
-            var it = object.refs.valueIterator();
-            while (it.next()) |child_object| {
-                try tracer.trace(child_object.*);
-            }
-        }
-
-        fn finalizeObject(ctx: *anyopaque, tag: TestGC.ObjectTag, object_data: *anyopaque) void {
-            _ = ctx;
-            _ = tag;
-
-            const object = @as(*TestObject, @ptrCast(@alignCast(object_data)));
-            object.deinit();
-        }
-    };
-
-    var result = TestResult.init(std.testing.allocator);
+    var result = TestResult.init(allocator);
     defer result.deinit();
 
-    var mutator = try TestMutator.init(std.testing.allocator, &result);
-    defer mutator.deinit();
+    var gc = TestGC.init(allocator);
+    defer gc.deinit();
+
+    var root_object = try gc.create(TestObject);
+    root_object.* = TestObject.init(allocator, "root", &result);
+    try gc.root(root_object);
+    defer TestGC.unroot(root_object);
 
     // basic example
 
-    const basic_1_object = try mutator.gc.create(TestObject);
-    basic_1_object.* = TestObject.init(mutator.allocator, "basic_1", &result);
-    const basic_2_object = try mutator.gc.create(TestObject);
-    basic_2_object.* = TestObject.init(mutator.allocator, "basic_2", &result);
+    const basic_1_object = try gc.create(TestObject);
+    basic_1_object.* = TestObject.init(gc.allocator, "basic_1", &result);
+    const basic_2_object = try gc.create(TestObject);
+    basic_2_object.* = TestObject.init(gc.allocator, "basic_2", &result);
 
-    try mutator.root_object.addRef(basic_1_object);
-    try mutator.root_object.addRef(basic_2_object);
-    try mutator.gc.collect();
+    try root_object.addRef(basic_1_object);
+    try root_object.addRef(basic_2_object);
+    try gc.collect();
     try std.testing.expect(!result.hasFreedObject("basic_1"));
     try std.testing.expect(!result.hasFreedObject("basic_2"));
 
-    mutator.root_object.removeRef(basic_1_object);
-    try mutator.gc.collect();
+    root_object.removeRef(basic_1_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("basic_1"));
     try std.testing.expect(!result.hasFreedObject("basic_2"));
 
-    mutator.root_object.removeRef(basic_2_object);
-    try mutator.gc.collect();
+    root_object.removeRef(basic_2_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("basic_1"));
     try std.testing.expect(result.hasFreedObject("basic_2"));
 
     // multiple layers
 
-    const layers_1_object = try mutator.gc.create(TestObject);
-    layers_1_object.* = TestObject.init(mutator.allocator, "layers_1", &result);
-    const layers_2_object = try mutator.gc.create(TestObject);
-    layers_2_object.* = TestObject.init(mutator.allocator, "layers_2", &result);
-    const layers_3_object = try mutator.gc.create(TestObject);
-    layers_3_object.* = TestObject.init(mutator.allocator, "layers_3", &result);
-    const layers_4_object = try mutator.gc.create(TestObject);
-    layers_4_object.* = TestObject.init(mutator.allocator, "layers_4", &result);
-    const layers_5_object = try mutator.gc.create(TestObject);
-    layers_5_object.* = TestObject.init(mutator.allocator, "layers_5", &result);
+    const layers_1_object = try gc.create(TestObject);
+    layers_1_object.* = TestObject.init(gc.allocator, "layers_1", &result);
+    const layers_2_object = try gc.create(TestObject);
+    layers_2_object.* = TestObject.init(gc.allocator, "layers_2", &result);
+    const layers_3_object = try gc.create(TestObject);
+    layers_3_object.* = TestObject.init(gc.allocator, "layers_3", &result);
+    const layers_4_object = try gc.create(TestObject);
+    layers_4_object.* = TestObject.init(gc.allocator, "layers_4", &result);
+    const layers_5_object = try gc.create(TestObject);
+    layers_5_object.* = TestObject.init(gc.allocator, "layers_5", &result);
 
-    try mutator.root_object.addRef(layers_1_object);
-    try mutator.root_object.addRef(layers_2_object);
+    try root_object.addRef(layers_1_object);
+    try root_object.addRef(layers_2_object);
     try layers_2_object.addRef(layers_3_object);
     try layers_2_object.addRef(layers_4_object);
     try layers_3_object.addRef(layers_5_object);
-    try mutator.gc.collect();
+    try gc.collect();
     try std.testing.expect(!result.hasFreedObject("layers_1"));
     try std.testing.expect(!result.hasFreedObject("layers_2"));
     try std.testing.expect(!result.hasFreedObject("layers_3"));
     try std.testing.expect(!result.hasFreedObject("layers_4"));
     try std.testing.expect(!result.hasFreedObject("layers_5"));
 
-    mutator.root_object.removeRef(layers_1_object);
-    try mutator.gc.collect();
+    root_object.removeRef(layers_1_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("layers_1"));
     try std.testing.expect(!result.hasFreedObject("layers_2"));
     try std.testing.expect(!result.hasFreedObject("layers_3"));
     try std.testing.expect(!result.hasFreedObject("layers_4"));
     try std.testing.expect(!result.hasFreedObject("layers_5"));
 
-    mutator.root_object.removeRef(layers_2_object);
-    try mutator.gc.collect();
+    root_object.removeRef(layers_2_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("layers_1"));
     try std.testing.expect(result.hasFreedObject("layers_2"));
     try std.testing.expect(result.hasFreedObject("layers_3"));
@@ -404,74 +326,79 @@ test GarbageCollector {
 
     // circular references
 
-    const circular_1_object = try mutator.gc.create(TestObject);
-    circular_1_object.* = TestObject.init(mutator.allocator, "circular_1", &result);
-    const circular_2_object = try mutator.gc.create(TestObject);
-    circular_2_object.* = TestObject.init(mutator.allocator, "circular_2", &result);
+    const circular_1_object = try gc.create(TestObject);
+    circular_1_object.* = TestObject.init(gc.allocator, "circular_1", &result);
+    const circular_2_object = try gc.create(TestObject);
+    circular_2_object.* = TestObject.init(gc.allocator, "circular_2", &result);
 
-    try mutator.root_object.addRef(circular_1_object);
+    try root_object.addRef(circular_1_object);
     try circular_1_object.addRef(circular_2_object);
     try circular_2_object.addRef(circular_1_object);
-    try mutator.gc.collect();
+    try gc.collect();
     try std.testing.expect(!result.hasFreedObject("circular_1"));
     try std.testing.expect(!result.hasFreedObject("circular_2"));
 
-    mutator.root_object.removeRef(circular_1_object);
-    try mutator.gc.collect();
+    root_object.removeRef(circular_1_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("circular_1"));
     try std.testing.expect(result.hasFreedObject("circular_2"));
 
     // pointing to root
 
-    const point_root_object = try mutator.gc.create(TestObject);
-    point_root_object.* = TestObject.init(mutator.allocator, "point_root", &result);
+    const point_root_object = try gc.create(TestObject);
+    point_root_object.* = TestObject.init(gc.allocator, "point_root", &result);
 
-    try point_root_object.addRef(mutator.root_object);
-    try mutator.gc.collect();
+    try point_root_object.addRef(root_object);
+    try gc.collect();
     try std.testing.expect(result.hasFreedObject("point_root"));
 }
 
-fn TagFromObject(comptime Object: type) type {
-    const union_fields = getUnionFields(Object);
-    var enum_fields: [union_fields.len]std.builtin.Type.EnumField = undefined;
-    inline for (union_fields, 0..) |union_field, index| {
-        enum_fields[index] = .{
-            .name = union_field.name,
-            .value = @intCast(index),
-        };
+const ObjectHeader = packed struct {
+    is_root: bool = false,
+    color: u2,
+    padding: u5 = 0,
+    tag: u8,
+    next_ptr: u48 = 0,
+
+    fn getNext(self: *ObjectHeader) ?*ObjectHeader {
+        return @as(?*ObjectHeader, @ptrFromInt(self.next_ptr));
     }
-    return @Type(.{
-        .Enum = .{
-            .tag_type = u8,
-            .fields = &enum_fields,
-            .decls = &.{},
-            .is_exhaustive = true,
-        },
-    });
-}
 
-test TagFromObject {
-    const Tag = TagFromObject(union { a: u8, b: u16 });
-    try std.testing.expectEqual(0, @intFromEnum(Tag.a));
-    try std.testing.expectEqual(1, @intFromEnum(Tag.b));
-}
-
-fn tagFromObjectType(comptime Object: type, comptime T: type) TagFromObject(Object) {
-    const union_fields = getUnionFields(Object);
-    const enum_fields = std.meta.fields(TagFromObject(Object));
-    inline for (union_fields, enum_fields) |union_field, enum_field| {
-        if (!std.mem.eql(u8, union_field.name, enum_field.name)) unreachable;
-        if (union_field.type == T) return @enumFromInt(enum_field.value);
+    fn setNext(self: *ObjectHeader, object_header: ?*ObjectHeader) void {
+        if (object_header) |header| {
+            self.next_ptr = @intCast(@intFromPtr(header));
+        } else {
+            self.next_ptr = 0;
+        }
     }
-    unreachable;
-}
+};
 
-test tagFromObjectType {
-    const Object = union { a: u8, b: u16, c: u32 };
-    try std.testing.expectEqual(0, @intFromEnum(tagFromObjectType(Object, u8)));
-    try std.testing.expectEqual(1, @intFromEnum(tagFromObjectType(Object, u16)));
-    try std.testing.expectEqual(2, @intFromEnum(tagFromObjectType(Object, u32)));
-}
+const ObjectList = struct {
+    first: ?*ObjectHeader = null,
+
+    fn popFirst(self: *ObjectList) ?*ObjectHeader {
+        const object_header = self.first orelse return null;
+        self.first = object_header.getNext();
+        return object_header;
+    }
+
+    fn prepend(self: *ObjectList, object_header: *ObjectHeader) void {
+        object_header.setNext(self.first);
+        self.first = object_header;
+    }
+};
+
+const Colors = struct {
+    white: u2 = 0,
+    black: u2 = 1,
+    gray: u2 = 2,
+
+    fn swapWhiteBlack(self: *Colors) void {
+        const tmp = self.white;
+        self.white = self.black;
+        self.black = tmp;
+    }
+};
 
 fn verifyObjectType(comptime Object: type, comptime T: type) void {
     const fields = getUnionFields(Object);
@@ -481,13 +408,34 @@ fn verifyObjectType(comptime Object: type, comptime T: type) void {
     @compileError(@typeName(T) ++ " is not a valid GC object type");
 }
 
-fn createObjectSizeMap(comptime Object: type) std.EnumArray(TagFromObject(Object), usize) {
+fn tagFromObjectType(comptime Object: type, comptime T: type) u8 {
     const fields = getUnionFields(Object);
-    var map = std.EnumArray(TagFromObject(Object), usize).initUndefined();
-    inline for (fields) |field| {
-        map.set(tagFromObjectType(Object, field.type), @sizeOf(field.type));
+    inline for (fields, 0..) |field, index| {
+        if (field.type == T) return @intCast(index);
+    }
+    @compileError(@typeName(T) ++ " is not a valid GC object type");
+}
+
+test tagFromObjectType {
+    try std.testing.expectEqual(0, tagFromObjectType(union { a: u8, b: u16 }, u8));
+    try std.testing.expectEqual(1, tagFromObjectType(union { a: u8, b: u16 }, u16));
+}
+
+fn createObjectSizeMap(comptime Object: type) [getUnionFields(Object).len]usize {
+    const fields = getUnionFields(Object);
+    var map: [fields.len]usize = undefined;
+    inline for (fields, 0..) |field, index| {
+        map[index] = @sizeOf(field.type);
     }
     return map;
+}
+
+test createObjectSizeMap {
+    try std.testing.expectEqual([1]usize{1}, createObjectSizeMap(union { a: u8 }));
+    try std.testing.expectEqual([2]usize{ 1, 2 }, createObjectSizeMap(union { a: u8, b: u16 }));
+    try std.testing.expectEqual([3]usize{ 1, 2, 4 }, createObjectSizeMap(union { a: u8, b: u16, c: u32 }));
+    try std.testing.expectEqual([4]usize{ 1, 2, 4, 8 }, createObjectSizeMap(union { a: u8, b: u16, c: u32, d: u64 }));
+    try std.testing.expectEqual([5]usize{ 1, 2, 4, 8, 16 }, createObjectSizeMap(union { a: u8, b: u16, c: u32, d: u64, e: u128 }));
 }
 
 fn findMaxAlign(comptime Object: type) usize {
@@ -508,47 +456,9 @@ test findMaxAlign {
 }
 
 fn getUnionFields(comptime Object: type) []const std.builtin.Type.UnionField {
+    // TODO: ensure field types are unique too
     return switch (@typeInfo(Object)) {
         .Union => |info| if (info.fields.len > 255) @compileError("Object must have <256 fields") else info.fields,
         else => @compileError("Object must be a union"),
     };
 }
-
-pub const MockMutator = struct {
-    pub fn mutator(self: *MockMutator) GC.Mutator {
-        return .{
-            .ptr = self,
-            .vtable = &.{
-                .mark_roots = markRoots,
-                .trace = traceObject,
-                .finalize = finalizeObject,
-            },
-        };
-    }
-
-    pub fn init(allocator: std.mem.Allocator) !*MockMutator {
-        return try allocator.create(MockMutator);
-    }
-
-    pub fn deinit(self: *MockMutator, allocator: std.mem.Allocator) void {
-        allocator.destroy(self);
-    }
-
-    fn markRoots(ctx: *anyopaque, gc: *GC) !void {
-        _ = ctx;
-        _ = gc;
-    }
-
-    fn traceObject(ctx: *anyopaque, tracer: *GC.Tracer, tag: GC.ObjectTag, data: *anyopaque) !void {
-        _ = ctx;
-        _ = tracer;
-        _ = tag;
-        _ = data;
-    }
-
-    fn finalizeObject(ctx: *anyopaque, tag: GC.ObjectTag, data: *anyopaque) void {
-        _ = ctx;
-        _ = tag;
-        _ = data;
-    }
-};

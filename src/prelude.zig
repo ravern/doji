@@ -1,6 +1,8 @@
 const std = @import("std");
-const Value = @import("value.zig").Value;
+const compile = @import("compile.zig");
 const Error = @import("value.zig").Error;
+const Value = @import("value.zig").Value;
+const String = @import("value.zig").String;
 const ForeignFn = @import("value.zig").ForeignFn;
 
 pub const add_foreign_fn = &ForeignFn{

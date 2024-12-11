@@ -1,17 +1,17 @@
 const std = @import("std");
 const code = @import("../code.zig");
 const compile = @import("../compile.zig");
-const GC = @import("../gc.zig").GC;
+const GC = @import("../root.zig").GC;
+const Source = @import("../source.zig").Source;
 const Value = @import("../value.zig").Value;
 const String = @import("../value.zig").String;
-const Source = @import("../source.zig").Source;
 const ast = @import("ast.zig");
 
 pub fn generate(ctx: *compile.Context, block: *const ast.Block) !*code.Chunk {
     var frame = Frame.init(ctx.allocator, ctx.gc);
     defer frame.deinit();
 
-    try generateExpression(ctx, &frame, &block.expressions[0]);
+    try generateExpression(ctx, &frame, &block.statements[0].expression);
     try frame.appendInstruction(.ret, ctx.source.getLocation(block.span.offset + block.span.len));
 
     return frame.toOwnedChunk(0, ctx.source.path);
@@ -36,7 +36,10 @@ fn generateLiteral(ctx: *compile.Context, frame: *Frame, literal: *const ast.Lit
                 try frame.appendInstructionArg(.int, @intCast(int_literal.value), ctx.source.getLocation(int_literal.span.offset));
             }
         },
-        .float => unreachable,
+        .float => |float_literal| {
+            const constant_index = try frame.appendConstant(Value.init(float_literal.value));
+            try frame.appendInstructionArg(.constant, constant_index, ctx.source.getLocation(float_literal.span.offset));
+        },
     }
 }
 

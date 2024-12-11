@@ -1,4 +1,5 @@
 const std = @import("std");
+const code = @import("code.zig");
 const ast = @import("compile/ast.zig");
 const scan = @import("compile/scan.zig");
 const Scanner = scan.Scanner;
@@ -6,12 +7,11 @@ const Token = scan.Token;
 const parse = @import("compile/parse.zig");
 const codegen = @import("compile/codegen.zig");
 const Parser = parse.Parser;
-const code = @import("code.zig");
-const GC = @import("gc.zig").GC;
+const GC = @import("root.zig").GC;
+const Source = @import("source.zig").Source;
 const Value = @import("value.zig").Value;
 const String = @import("value.zig").String;
 const StringPool = @import("vm.zig").StringPool;
-const Source = @import("source.zig").Source;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,

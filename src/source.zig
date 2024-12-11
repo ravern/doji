@@ -18,6 +18,13 @@ pub const Source = struct {
         pub const zero = .{ .offset = 0, .len = 0 };
     };
 
+    pub fn init(path: []const u8, content: []const u8) Source {
+        return .{
+            .path = path,
+            .content = content,
+        };
+    }
+
     pub fn getLocation(self: *const Source, offset: usize) Location {
         var line: usize = 1;
         var column: usize = 1;

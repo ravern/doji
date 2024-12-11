@@ -3,13 +3,17 @@ const Source = @import("../source.zig").Source;
 const String = @import("../value.zig").String;
 
 pub const Block = struct {
-    expressions: []const Expression,
+    statements: []const Statement,
     span: Source.Span,
 
     pub fn deinit(self: *Block, allocator: std.mem.Allocator) void {
-        allocator.free(self.expressions);
+        allocator.free(self.statements);
         self.* = undefined;
     }
+};
+
+pub const Statement = union(enum) {
+    expression: Expression,
 };
 
 pub const Expression = union(enum) {
