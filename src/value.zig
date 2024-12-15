@@ -166,6 +166,32 @@ fn invalidValueTypeError(comptime T: type) noreturn {
     @compileError(@typeName(T) ++ " is not a valid type for Value");
 }
 
+fn addInt(left: i48, right: i48) i48 {
+    return left + right;
+}
+fn subInt(left: i48, right: i48) i48 {
+    return left - right;
+}
+fn mulInt(left: i48, right: i48) i48 {
+    return left * right;
+}
+fn divInt(left: i48, right: i48) i48 {
+    return @divTrunc(left, right);
+}
+
+fn addFloat(left: f64, right: f64) f64 {
+    return left + right;
+}
+fn subFloat(left: f64, right: f64) f64 {
+    return left - right;
+}
+fn mulFloat(left: f64, right: f64) f64 {
+    return left * right;
+}
+fn divFloat(left: f64, right: f64) f64 {
+    return left / right;
+}
+
 test Value {
     const allocator = std.testing.allocator;
 
@@ -175,11 +201,11 @@ test Value {
     const string = try gc.create(String);
     string.* = String.init("");
     const list = try gc.create(List);
-    list.* = List.init();
+    list.* = List{};
     const map = try gc.create(Map);
-    map.* = Map.init();
+    map.* = Map{};
     const fiber = try gc.create(Fiber);
-    fiber.* = Fiber.initEmpty();
+    fiber.* = Fiber{};
     const foreign_fn: ForeignFn = undefined;
 
     // positive tests
@@ -228,6 +254,11 @@ pub const String = struct {
         self.* = undefined;
     }
 
+    pub fn trace(self: *const String, tracer: *GC.Tracer) !void {
+        _ = self;
+        _ = tracer;
+    }
+
     pub fn eql(left: *String, right: *String) bool {
         return std.mem.eql(u8, left.data, right.data);
     }
@@ -235,10 +266,6 @@ pub const String = struct {
 
 pub const List = struct {
     data: std.ArrayListUnmanaged(Value) = .{},
-
-    pub fn init() List {
-        return .{};
-    }
 
     pub fn deinit(self: *List, allocator: std.mem.Allocator) void {
         self.data.deinit(allocator);
@@ -254,10 +281,6 @@ pub const List = struct {
 
 pub const Map = struct {
     data: std.HashMapUnmanaged(Value, Value, Value.HashMapContext, 80) = .{},
-
-    pub fn init() Map {
-        return .{};
-    }
 
     pub fn deinit(self: *Map, allocator: std.mem.Allocator) void {
         self.data.deinit(allocator);
@@ -276,28 +299,16 @@ pub const Map = struct {
 pub const Error = struct {
     message: *String,
     data: ?Value,
-    stack_trace: std.ArrayListUnmanaged(TraceItem),
+    stack_trace: std.ArrayListUnmanaged(TraceItem) = .{},
 
     pub const TraceItem = struct {
         path: []const u8,
         location: Source.Location,
     };
 
-    pub fn init(allocator: std.mem.Allocator, message: *String, data: ?Value) !Error {
-        return .{
-            .message = message,
-            .data = data,
-            .stack_trace = try std.ArrayListUnmanaged(TraceItem).initCapacity(allocator, 10),
-        };
-    }
-
     pub fn deinit(self: *Error, allocator: std.mem.Allocator) void {
         self.stack_trace.deinit(allocator);
         self.* = undefined;
-    }
-
-    pub fn addTraceItem(self: *Error, allocator: std.mem.Allocator, item: TraceItem) !void {
-        try self.stack_trace.append(allocator, item);
     }
 
     pub fn trace(self: *const Error, tracer: *GC.Tracer) !void {
@@ -306,15 +317,15 @@ pub const Error = struct {
             try data.trace(tracer);
         }
     }
+
+    pub fn addTraceItem(self: *Error, allocator: std.mem.Allocator, item: TraceItem) !void {
+        try self.stack_trace.append(allocator, item);
+    }
 };
 
 pub const Closure = struct {
     chunk: *const code.Chunk,
     upvalues: []*Upvalue,
-
-    pub fn init(chunk: *const code.Chunk, upvalues: []*Upvalue) !Closure {
-        return .{ .chunk = chunk, .upvalues = upvalues };
-    }
 
     pub fn deinit(self: *Closure, allocator: std.mem.Allocator) void {
         allocator.free(self.upvalues);
@@ -358,76 +369,46 @@ test Upvalue {
 }
 
 pub const Fiber = struct {
-    stack: std.ArrayListUnmanaged(Value) = .{},
-    call_stack: std.ArrayListUnmanaged(CallFrame) = .{},
+    values: std.ArrayListUnmanaged(Value) = .{},
+    frames: std.ArrayListUnmanaged(Frame) = .{},
     parent: ?*Fiber = null,
 
-    const default_stack_size = 1024;
-
-    pub const CallFrame = union(enum) {
-        closure: ClosureCallFrame,
-        foreign_fn: ForeignFnCallFrame,
+    pub const Frame = union(enum) {
+        closure: ClosureFrame,
+        foreign_fn: ForeignFnFrame,
     };
 
-    pub const ClosureCallFrame = struct {
+    pub const ClosureFrame = struct {
         closure: *Closure,
-        chunk: *const code.Chunk, // saves a pointer lookup each step
-        ip: [*]const code.Instruction,
-        bp_index: usize,
+        ip: usize,
+        bp: usize,
         trace_item: Error.TraceItem,
-
-        pub fn getIPIndex(self: *const @This()) usize {
-            return (@intFromPtr(self.ip) - @intFromPtr(self.chunk.code.ptr)) / @sizeOf(code.Instruction);
-        }
     };
 
-    pub const ForeignFnCallFrame = struct {
+    pub const ForeignFnFrame = struct {
         foreign_fn: *const ForeignFn,
-        step_index: usize = 0,
+        step: usize,
+        bp: usize,
         trace_item: Error.TraceItem,
     };
 
-    pub const Step = union(enum) {
-        instruction: code.Instruction,
-        step_fn: ForeignFn.StepFn,
-    };
-
-    pub fn initEmpty() Fiber {
+    pub fn init() Fiber {
         return .{};
     }
 
-    pub fn init(allocator: std.mem.Allocator, closure: *Closure, trace_item: Error.TraceItem) !Fiber {
-        var self = Fiber{
-            .stack = try std.ArrayListUnmanaged(Value).initCapacity(allocator, default_stack_size),
-            .call_stack = try std.ArrayListUnmanaged(CallFrame).initCapacity(allocator, 1),
-        };
-
-        try self.call_stack.append(allocator, .{
-            .closure = .{
-                .closure = closure,
-                .chunk = closure.chunk,
-                .ip = closure.chunk.code.ptr,
-                .bp_index = 0,
-                .trace_item = trace_item,
-            },
-        });
-
-        return self;
-    }
-
     pub fn deinit(self: *Fiber, allocator: std.mem.Allocator) void {
-        self.stack.deinit(allocator);
-        self.call_stack.deinit(allocator);
+        self.values.deinit(allocator);
+        self.frames.deinit(allocator);
         self.* = undefined;
     }
 
     pub fn trace(self: *const Fiber, tracer: *GC.Tracer) !void {
-        for (self.stack.items) |value| {
+        for (self.values.items) |value| {
             try value.trace(tracer);
         }
-        for (self.call_stack.items) |frame| {
+        for (self.frames.items) |frame| {
             switch (frame) {
-                .closure => |closure_frame| try closure_frame.chunk.trace(tracer),
+                .closure => |closure_frame| try closure_frame.closure.chunk.trace(tracer),
                 .foreign_fn => {},
             }
         }
@@ -442,152 +423,29 @@ pub const Fiber = struct {
     }
 
     pub fn push(self: *Fiber, allocator: std.mem.Allocator, value: Value) !void {
-        try self.stack.append(allocator, value);
+        try self.values.append(allocator, value);
     }
 
     pub fn pop(self: *Fiber) ?Value {
-        return self.stack.popOrNull();
+        return self.values.popOrNull();
     }
 
     pub fn get(self: *const Fiber, index: usize) ?Value {
-        const frame = self.getCurrentClosureFrame() orelse return null;
-        return self.stack.items[frame.bp_index + index];
+        return self.values.items[index];
     }
 
     pub fn getFromTop(self: *const Fiber, index: usize) ?Value {
-        return self.stack.items[self.stack.items.len - 1 - index];
+        return self.values.items[self.values.items.len - 1 - index];
     }
 
-    pub fn pushClosureFrame(self: *Fiber, allocator: std.mem.Allocator, closure: *Closure, trace_item: Error.TraceItem) !void {
-        try self.call_stack.append(allocator, .{
-            .closure = .{
-                .closure = closure,
-                .chunk = closure.chunk,
-                .ip = closure.chunk.code.ptr,
-                // FIXME: assumes arity has been checked
-                .bp_index = self.stack.items.len - closure.chunk.arity,
-                .trace_item = trace_item,
-            },
-        });
+    pub fn pushFrame(self: *Fiber, allocator: std.mem.Allocator, frame: Frame) !void {
+        try self.frames.append(allocator, frame);
     }
 
-    pub fn pushForeignFnFrame(self: *Fiber, allocator: std.mem.Allocator, foreign_fn: *const ForeignFn, trace_item: Error.TraceItem) !void {
-        try self.call_stack.append(allocator, .{
-            .foreign_fn = .{
-                .foreign_fn = foreign_fn,
-                .trace_item = trace_item,
-            },
-        });
-    }
-
-    pub fn popFrame(self: *Fiber) ?CallFrame {
-        if (self.call_stack.items.len == 1) return null;
-        return self.call_stack.pop();
-    }
-
-    pub fn getConstant(self: *const Fiber, index: usize) ?Value {
-        const frame = self.getCurrentClosureFrame() orelse return null;
-        return frame.closure.chunk.constants[index];
-    }
-
-    pub fn advance(self: *Fiber) ?Step {
-        const frame = self.getCurrentFrame();
-        switch (frame.*) {
-            .closure => {
-                if (frame.closure.chunk.code.len == 0) return null;
-                const inst = frame.closure.ip[0];
-                frame.closure.ip += 1;
-                return Step{ .instruction = inst };
-            },
-            .foreign_fn => {
-                if (frame.foreign_fn.foreign_fn.step_fns.len == 0) return null;
-                const step_fn = frame.foreign_fn.foreign_fn.step_fns[frame.foreign_fn.step_index];
-                frame.foreign_fn.step_index += 1;
-                return Step{ .step_fn = step_fn };
-            },
-        }
-    }
-
-    pub fn getCurrentTraceItem(self: *const Fiber) ?Error.TraceItem {
-        const frame = self.getCurrentFrame();
-        return switch (frame.*) {
-            // TODO: potential out-of-bounds?
-            .closure => .{
-                .path = frame.closure.chunk.trace_items.path,
-                .location = frame.closure.chunk.trace_items.locations[frame.closure.getIPIndex() - 1],
-            },
-            .foreign_fn => frame.foreign_fn.foreign_fn.trace_items[frame.foreign_fn.step_index - 1],
-        };
-    }
-
-    inline fn getCurrentClosureFrame(self: *const Fiber) ?*ClosureCallFrame {
-        const frame = self.getCurrentFrame();
-        switch (frame.*) {
-            .closure => return &frame.closure,
-            .foreign_fn => return null,
-        }
-    }
-
-    inline fn getCurrentFrame(self: *const Fiber) *CallFrame {
-        // call stack is always non-empty
-        return &self.call_stack.items[self.call_stack.items.len - 1];
+    pub fn popFrame(self: *Fiber) ?Frame {
+        return self.frames.popOrNull();
     }
 };
-
-test Fiber {
-    const allocator = std.testing.allocator;
-
-    const trace_item = Error.TraceItem{ .path = "<test>", .location = Source.Location.zero };
-
-    const chunk_one = code.Chunk{ .arity = 0, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
-    const chunk_two = code.Chunk{ .arity = 1, .code = &.{}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
-    const chunk_three = code.Chunk{ .arity = 2, .code = &.{.{ .op = .ret }}, .constants = &.{}, .chunks = &.{}, .trace_items = .{ .path = "<test>", .locations = &.{} } };
-
-    var closure_one = Closure{ .chunk = &chunk_one, .upvalues = &.{} };
-    var closure_two = Closure{ .chunk = &chunk_two, .upvalues = &.{} };
-    var closure_three = Closure{ .chunk = &chunk_three, .upvalues = &.{} };
-
-    var fiber = try Fiber.init(allocator, &closure_one, trace_item);
-    defer fiber.deinit(allocator);
-
-    try fiber.push(allocator, Value.init(1));
-    try fiber.push(allocator, Value.init(2));
-
-    try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
-    try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
-
-    try fiber.pushClosureFrame(allocator, &closure_two, trace_item);
-
-    try fiber.push(allocator, Value.init(3));
-
-    try std.testing.expectEqual(Value.init(2), fiber.get(0).?);
-    try std.testing.expectEqual(Value.init(3), fiber.pop().?);
-
-    _ = fiber.popFrame().?;
-
-    try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
-    try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
-
-    try fiber.pushClosureFrame(allocator, &closure_three, trace_item);
-
-    try std.testing.expectEqual(.ret, fiber.advance().?.instruction.op);
-
-    try fiber.push(allocator, Value.init(4));
-
-    try std.testing.expectEqual(Value.init(1), fiber.get(0).?);
-    try std.testing.expectEqual(Value.init(2), fiber.get(1).?);
-    try std.testing.expectEqual(Value.init(4), fiber.get(2).?);
-
-    var fiber_parent = try Fiber.init(allocator, &closure_one, trace_item);
-    defer fiber_parent.deinit(allocator);
-    fiber.parent = &fiber_parent;
-
-    var fiber_parent_parent = try Fiber.init(allocator, &closure_one, trace_item);
-    defer fiber_parent_parent.deinit(allocator);
-    fiber_parent.parent = &fiber_parent_parent;
-
-    try std.testing.expectEqual(&fiber_parent_parent, fiber.getRoot());
-}
 
 pub const ForeignFn = struct {
     arity: usize,
@@ -598,39 +456,14 @@ pub const ForeignFn = struct {
 
     pub const Context = struct {
         allocator: std.mem.Allocator,
-        fiber: *Fiber,
         gc: *GC,
         string_pool: *StringPool,
+        fiber: *Fiber,
+        frame: *const Fiber.Frame,
     };
 
     pub const Result = union(enum) {
         ret: Value,
-        call: usize,
+        call: usize, // arity
     };
 };
-
-fn addInt(left: i48, right: i48) i48 {
-    return left + right;
-}
-fn subInt(left: i48, right: i48) i48 {
-    return left - right;
-}
-fn mulInt(left: i48, right: i48) i48 {
-    return left * right;
-}
-fn divInt(left: i48, right: i48) i48 {
-    return @divTrunc(left, right);
-}
-
-fn addFloat(left: f64, right: f64) f64 {
-    return left + right;
-}
-fn subFloat(left: f64, right: f64) f64 {
-    return left - right;
-}
-fn mulFloat(left: f64, right: f64) f64 {
-    return left * right;
-}
-fn divFloat(left: f64, right: f64) f64 {
-    return left / right;
-}

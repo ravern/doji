@@ -25,8 +25,6 @@ pub const VM = struct {
     globals: std.ArrayList(*String),
     resolver: Resolver,
 
-    curr_fiber: ?*Fiber = null,
-
     pub const Error = error{
         OutOfMemory,
         CorruptedBytecode,
@@ -79,63 +77,93 @@ pub const VM = struct {
 
     fn evaluateChunk(self: *VM, chunk: *const code.Chunk) !Value {
         const root_closure = try self.gc.create(Closure);
-        root_closure.* = .{ .chunk = chunk, .upvalues = &.{} };
+        root_closure.* = .{
+            .chunk = chunk,
+            .upvalues = try self.allocator.alloc(*Upvalue, 0),
+        };
+        const root_fiber = try self.gc.create(Fiber);
+        root_fiber.* = Fiber.init();
 
-        var fiber = try self.gc.create(Fiber);
-        fiber.* = try Fiber.init(self.allocator, root_closure, .{ .path = "vm.zig", .location = Source.Location.zero });
-
-        self.curr_fiber = fiber;
-
+        var fiber = root_fiber;
+        var frame = Fiber.Frame{
+            .closure = Fiber.ClosureFrame{
+                .closure = root_closure,
+                .ip = 0,
+                .bp = 0,
+                .trace_item = .{ .path = "vm.zig", .location = Source.Location.zero },
+            },
+        };
         while (true) {
-            const step = fiber.advance() orelse return Error.CorruptedBytecode;
-            switch (step) {
-                .instruction => |inst| switch (inst.op) {
-                    .nop => {},
+            switch (frame) {
+                .closure => |*closure_frame| {
+                    if (closure_frame.ip >= closure_frame.closure.chunk.code.len) return Error.CorruptedBytecode;
+                    const inst = closure_frame.closure.chunk.code[closure_frame.ip];
+                    closure_frame.ip += 1;
 
-                    .true => try fiber.push(self.allocator, Value.init(true)),
-                    .false => try fiber.push(self.allocator, Value.init(false)),
-                    .int => try fiber.push(self.allocator, Value.init(@as(i48, @intCast(inst.arg)))),
-                    .constant => {
-                        const value = fiber.getConstant(@intCast(inst.arg)) orelse return Error.CorruptedBytecode;
-                        try fiber.push(self.allocator, value);
-                    },
-                    .foreign_fn => {
-                        const foreign_fn = self.foreign_fn_registry.get(@intCast(inst.arg)) orelse return Error.CorruptedBytecode;
-                        try fiber.push(self.allocator, Value.init(foreign_fn));
-                    },
+                    switch (inst.op) {
+                        .nop => {},
 
-                    .add => try fiber.push(self.allocator, try self.binaryOp(Value.add)),
-                    .sub => try fiber.push(self.allocator, try self.binaryOp(Value.sub)),
-                    .mul => try fiber.push(self.allocator, try self.binaryOp(Value.mul)),
-                    .div => try fiber.push(self.allocator, try self.binaryOp(Value.div)),
+                        .true => try fiber.push(self.allocator, Value.init(true)),
+                        .false => try fiber.push(self.allocator, Value.init(false)),
+                        .int => try fiber.push(self.allocator, Value.init(@as(i48, @intCast(inst.arg)))),
+                        .constant => {
+                            const constant_index: usize = @intCast(inst.arg);
+                            if (constant_index >= closure_frame.closure.chunk.constants.len) return Error.CorruptedBytecode;
+                            const value = closure_frame.closure.chunk.constants[constant_index];
+                            try fiber.push(self.allocator, value);
+                        },
+                        .foreign_fn => {
+                            const foreign_fn_index: usize = @intCast(inst.arg);
+                            if (foreign_fn_index >= self.foreign_fn_registry.data.items.len) return Error.CorruptedBytecode;
+                            const foreign_fn = self.foreign_fn_registry.data.items[foreign_fn_index];
+                            try fiber.push(self.allocator, Value.init(foreign_fn));
+                        },
 
-                    .is_error => {
-                        const value = fiber.pop() orelse return Error.CorruptedBytecode;
-                        try fiber.push(self.allocator, Value.init(value.cast(*ErrorValue) != null));
-                    },
+                        .add => try fiber.push(self.allocator, try self.binaryOp(fiber, Value.add)),
+                        .sub => try fiber.push(self.allocator, try self.binaryOp(fiber, Value.sub)),
+                        .mul => try fiber.push(self.allocator, try self.binaryOp(fiber, Value.mul)),
+                        .div => try fiber.push(self.allocator, try self.binaryOp(fiber, Value.div)),
 
-                    .call => try self.call(@intCast(inst.arg)),
-                    .ret => return fiber.pop() orelse return Error.CorruptedBytecode,
+                        .is_error => {
+                            const value = fiber.pop() orelse return Error.CorruptedBytecode;
+                            try fiber.push(self.allocator, Value.init(value.cast(*ErrorValue) != null));
+                        },
 
-                    else => unreachable,
+                        .call => {
+                            const arity: usize = @intCast(inst.arg);
+                            if (closure_frame.ip <= 0 or closure_frame.ip >= closure_frame.closure.chunk.trace_items.locations.len) return Error.CorruptedBytecode;
+                            const trace_item = .{
+                                .path = frame.closure.closure.chunk.trace_items.path,
+                                .location = frame.closure.closure.chunk.trace_items.locations[frame.closure.ip - 1],
+                            };
+                            try self.call(fiber, &frame, arity, trace_item);
+                        },
+                        .ret => return fiber.pop() orelse return Error.CorruptedBytecode,
+
+                        else => unreachable,
+                    }
                 },
-                .step_fn => |step_fn| {
+                .foreign_fn => |*foreign_fn_frame| {
+                    if (foreign_fn_frame.step >= foreign_fn_frame.foreign_fn.step_fns.len) return Error.CorruptedBytecode;
+                    const step_fn = foreign_fn_frame.foreign_fn.step_fns[foreign_fn_frame.step];
+                    foreign_fn_frame.step += 1;
+
                     const result = try step_fn(.{
                         .allocator = self.allocator,
-                        .fiber = fiber,
                         .gc = self.gc,
                         .string_pool = &self.string_pool,
+                        .fiber = fiber,
+                        .frame = &frame,
                     });
                     switch (result) {
                         .ret => {
-                            _ = fiber.popFrame();
+                            frame = fiber.popFrame() orelse return Error.CorruptedBytecode;
                             try fiber.push(self.allocator, result.ret);
                         },
                         .call => {
-                            const closure_value = fiber.getFromTop(result.call) orelse return Error.TODO;
-                            const closure = closure_value.cast(*Closure) orelse return Error.TODO;
-                            const trace_item = fiber.getCurrentTraceItem() orelse return Error.CorruptedBytecode;
-                            try fiber.pushClosureFrame(self.allocator, closure, trace_item);
+                            if (foreign_fn_frame.step <= 0 or foreign_fn_frame.step >= foreign_fn_frame.foreign_fn.trace_items.len) return Error.CorruptedBytecode;
+                            const trace_item = foreign_fn_frame.foreign_fn.trace_items[foreign_fn_frame.step - 1];
+                            try self.call(fiber, &frame, result.call, trace_item);
                         },
                     }
                 },
@@ -145,23 +173,40 @@ pub const VM = struct {
         unreachable;
     }
 
-    fn call(self: *VM, arity: usize) !void {
-        var fiber = self.curr_fiber.?;
-        const callable = fiber.getFromTop(arity) orelse return Error.CorruptedBytecode;
-        const trace_item = fiber.getCurrentTraceItem() orelse return Error.CorruptedBytecode;
-        if (callable.cast(*const ForeignFn)) |foreign_fn| {
-            if (foreign_fn.arity != arity) return Error.TODO;
-            try fiber.pushForeignFnFrame(self.allocator, foreign_fn, trace_item);
-        } else {
-            return Error.CorruptedBytecode;
-        }
-    }
-
-    fn binaryOp(self: *VM, op: fn (Value, Value) ?Value) !Value {
-        var fiber = self.curr_fiber.?;
+    fn binaryOp(self: *VM, fiber: *Fiber, op: fn (Value, Value) ?Value) !Value {
+        _ = self;
         const right = fiber.pop() orelse return Error.CorruptedBytecode;
         const left = fiber.pop() orelse return Error.CorruptedBytecode;
         return op(left, right) orelse Error.TODO;
+    }
+
+    fn call(self: *VM, fiber: *Fiber, frame: *Fiber.Frame, arity: usize, trace_item: ErrorValue.TraceItem) !void {
+        const callable = fiber.getFromTop(arity) orelse return Error.CorruptedBytecode;
+        if (callable.cast(*Closure)) |closure| {
+            if (closure.chunk.arity != arity) return Error.TODO;
+            try fiber.pushFrame(self.allocator, frame.*);
+            frame.* = .{
+                .closure = .{
+                    .closure = closure,
+                    .ip = 0,
+                    .bp = fiber.values.items.len - 1 - arity,
+                    .trace_item = trace_item,
+                },
+            };
+        } else if (callable.cast(*const ForeignFn)) |foreign_fn| {
+            if (foreign_fn.arity != arity) return Error.TODO;
+            try fiber.pushFrame(self.allocator, frame.*);
+            frame.* = .{
+                .foreign_fn = .{
+                    .foreign_fn = foreign_fn,
+                    .step = 0,
+                    .bp = fiber.values.items.len - 1 - arity,
+                    .trace_item = trace_item,
+                },
+            };
+        } else {
+            return Error.TODO;
+        }
     }
 };
 
