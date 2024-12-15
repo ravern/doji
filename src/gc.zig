@@ -3,19 +3,22 @@ const code = @import("code.zig");
 const value = @import("value.zig");
 
 pub fn GC(comptime Object: type) type {
+    // TODO: verify that each field of [Object] has [trace] and [deinit] methods
+
     return struct {
         const Self = @This();
 
-        allocator: std.mem.Allocator,
+        child_allocator: std.mem.Allocator,
+        // in case objects use a different allocator for internal allocations (e.g., list items)
+        deinit_allocator: std.mem.Allocator,
         objects: ObjectList = .{},
-        root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{}, // may contain unrooted objects
+        // may contain unrooted objects, that will be removed during the sweep phase
+        root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
         gray_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
         colors: Colors = .{},
 
-        pub const Error = error{
-            OutOfMemory,
-        };
-
+        // for now, only supports marking as an action, but we might want to extend support for other actions
+        // to be performed on the object graph.
         pub const Tracer = struct {
             gc: *Self,
             action: Action,
@@ -36,19 +39,34 @@ pub fn GC(comptime Object: type) type {
             }
         };
 
+        const Colors = struct {
+            white: u2 = 0,
+            black: u2 = 1,
+            gray: u2 = 2,
+
+            fn swapWhiteBlack(self: *Colors) void {
+                const tmp = self.white;
+                self.white = self.black;
+                self.black = tmp;
+            }
+        };
+
         const object_size_map = createObjectSizeMap(Object);
         const object_align = @max(@alignOf(ObjectHeader), findMaxAlign(Object));
         const object_log2_align = std.math.log2_int(usize, object_align);
         const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
 
-        pub fn init(allocator: std.mem.Allocator) Self {
-            return Self{ .allocator = allocator };
+        pub fn init(child_allocator: std.mem.Allocator, deinit_allocator: std.mem.Allocator) Self {
+            return Self{
+                .child_allocator = child_allocator,
+                .deinit_allocator = deinit_allocator,
+            };
         }
 
         pub fn deinit(self: *Self) void {
             self.destroyObjectList(&self.objects);
-            self.root_set.deinit(self.allocator);
-            self.gray_set.deinit(self.allocator);
+            self.root_set.deinit(self.child_allocator);
+            self.gray_set.deinit(self.child_allocator);
             self.* = undefined;
         }
 
@@ -60,7 +78,7 @@ pub fn GC(comptime Object: type) type {
             verifyObjectType(Object, T);
 
             const total_len = object_header_len + @sizeOf(T);
-            const ptr = self.allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse return std.mem.Allocator.Error.OutOfMemory;
+            const ptr = self.child_allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse return std.mem.Allocator.Error.OutOfMemory;
             const object_header = @as(*ObjectHeader, @ptrCast(@alignCast(ptr)));
             const object_data = @as(*T, @ptrCast(@alignCast(ptr[object_header_len..])));
 
@@ -76,7 +94,7 @@ pub fn GC(comptime Object: type) type {
         pub fn root(self: *Self, object_data: *anyopaque) !void {
             const object_header = headerFromData(object_data);
             object_header.is_root = true;
-            try self.root_set.append(self.allocator, object_header);
+            try self.root_set.append(self.child_allocator, object_header);
         }
 
         pub fn unroot(object_data: *anyopaque) void {
@@ -88,7 +106,7 @@ pub fn GC(comptime Object: type) type {
             const object_header = headerFromData(object_data);
             if (object_header.color == self.colors.gray) return;
             object_header.color = self.colors.gray;
-            try self.gray_set.append(self.allocator, object_header);
+            try self.gray_set.append(self.child_allocator, object_header);
         }
 
         pub fn collect(self: *Self) !void {
@@ -164,7 +182,7 @@ pub fn GC(comptime Object: type) type {
             while (curr_object_header) |object_header| : (curr_object_header = object_header.getNext()) {
                 inline for (getUnionFields(Object), 0..) |field, index| {
                     if (object_header.tag == index) {
-                        @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))).deinit(self.allocator);
+                        @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))).deinit(self.child_allocator);
                     }
                 }
             }
@@ -175,7 +193,7 @@ pub fn GC(comptime Object: type) type {
 
         fn destroyObjectHeader(self: *const Self, object_header: *ObjectHeader) void {
             const total_len = object_header_len + object_size_map[object_header.tag];
-            self.allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
+            self.child_allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
         }
 
         fn headerFromData(ptr: *anyopaque) *ObjectHeader {
@@ -252,7 +270,7 @@ test GC {
     var result = TestResult.init(allocator);
     defer result.deinit();
 
-    var gc = TestGC.init(allocator);
+    var gc = TestGC.init(allocator, allocator);
     defer gc.deinit();
 
     var root_object = try gc.create(TestObject);
@@ -263,9 +281,9 @@ test GC {
     // basic example
 
     const basic_1_object = try gc.create(TestObject);
-    basic_1_object.* = TestObject.init(gc.allocator, "basic_1", &result);
+    basic_1_object.* = TestObject.init(gc.child_allocator, "basic_1", &result);
     const basic_2_object = try gc.create(TestObject);
-    basic_2_object.* = TestObject.init(gc.allocator, "basic_2", &result);
+    basic_2_object.* = TestObject.init(gc.child_allocator, "basic_2", &result);
 
     try root_object.addRef(basic_1_object);
     try root_object.addRef(basic_2_object);
@@ -286,15 +304,15 @@ test GC {
     // multiple layers
 
     const layers_1_object = try gc.create(TestObject);
-    layers_1_object.* = TestObject.init(gc.allocator, "layers_1", &result);
+    layers_1_object.* = TestObject.init(gc.child_allocator, "layers_1", &result);
     const layers_2_object = try gc.create(TestObject);
-    layers_2_object.* = TestObject.init(gc.allocator, "layers_2", &result);
+    layers_2_object.* = TestObject.init(gc.child_allocator, "layers_2", &result);
     const layers_3_object = try gc.create(TestObject);
-    layers_3_object.* = TestObject.init(gc.allocator, "layers_3", &result);
+    layers_3_object.* = TestObject.init(gc.child_allocator, "layers_3", &result);
     const layers_4_object = try gc.create(TestObject);
-    layers_4_object.* = TestObject.init(gc.allocator, "layers_4", &result);
+    layers_4_object.* = TestObject.init(gc.child_allocator, "layers_4", &result);
     const layers_5_object = try gc.create(TestObject);
-    layers_5_object.* = TestObject.init(gc.allocator, "layers_5", &result);
+    layers_5_object.* = TestObject.init(gc.child_allocator, "layers_5", &result);
 
     try root_object.addRef(layers_1_object);
     try root_object.addRef(layers_2_object);
@@ -327,9 +345,9 @@ test GC {
     // circular references
 
     const circular_1_object = try gc.create(TestObject);
-    circular_1_object.* = TestObject.init(gc.allocator, "circular_1", &result);
+    circular_1_object.* = TestObject.init(gc.child_allocator, "circular_1", &result);
     const circular_2_object = try gc.create(TestObject);
-    circular_2_object.* = TestObject.init(gc.allocator, "circular_2", &result);
+    circular_2_object.* = TestObject.init(gc.child_allocator, "circular_2", &result);
 
     try root_object.addRef(circular_1_object);
     try circular_1_object.addRef(circular_2_object);
@@ -346,7 +364,7 @@ test GC {
     // pointing to root
 
     const point_root_object = try gc.create(TestObject);
-    point_root_object.* = TestObject.init(gc.allocator, "point_root", &result);
+    point_root_object.* = TestObject.init(gc.child_allocator, "point_root", &result);
 
     try point_root_object.addRef(root_object);
     try gc.collect();
@@ -385,18 +403,6 @@ const ObjectList = struct {
     fn prepend(self: *ObjectList, object_header: *ObjectHeader) void {
         object_header.setNext(self.first);
         self.first = object_header;
-    }
-};
-
-const Colors = struct {
-    white: u2 = 0,
-    black: u2 = 1,
-    gray: u2 = 2,
-
-    fn swapWhiteBlack(self: *Colors) void {
-        const tmp = self.white;
-        self.white = self.black;
-        self.black = tmp;
     }
 };
 

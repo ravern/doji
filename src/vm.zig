@@ -167,7 +167,7 @@ pub const VM = struct {
 test VM {
     const allocator = std.testing.allocator;
 
-    var gc = GC.init(allocator);
+    var gc = GC.init(allocator, allocator);
     defer gc.deinit();
 
     var resolver = MockResolver{};
@@ -198,7 +198,7 @@ pub const StringPool = struct {
         const result = try self.data.getOrPut(str);
         if (!result.found_existing) {
             result.value_ptr.* = try self.gc.create(String);
-            result.value_ptr.*.* = String.init(try self.gc.allocator.dupe(u8, str));
+            result.value_ptr.*.* = String.init(try self.gc.child_allocator.dupe(u8, str));
         }
         return result.value_ptr.*;
     }
@@ -207,7 +207,7 @@ pub const StringPool = struct {
 test StringPool {
     const allocator = std.testing.allocator;
 
-    var gc = GC.init(allocator);
+    var gc = GC.init(allocator, allocator);
     defer gc.deinit();
 
     var pool = StringPool.init(allocator, &gc);

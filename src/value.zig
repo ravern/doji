@@ -169,7 +169,7 @@ fn invalidValueTypeError(comptime T: type) noreturn {
 test Value {
     const allocator = std.testing.allocator;
 
-    var gc = GC.init(allocator);
+    var gc = GC.init(allocator, allocator);
     defer gc.deinit();
 
     const string = try gc.create(String);

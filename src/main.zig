@@ -15,7 +15,7 @@ pub fn main() !void {
 
     var resolver = doji.FileResolver{};
 
-    var gc = doji.GC.init(allocator);
+    var gc = doji.GC.init(allocator, allocator);
     defer gc.deinit();
 
     var vm = try doji.VM.init(allocator, &gc, resolver.resolver());
