@@ -5,6 +5,7 @@ const gc = @import("gc.zig");
 const vm = @import("vm.zig");
 const resolver = @import("resolver.zig");
 const source = @import("source.zig");
+const string_pool = @import("string_pool.zig");
 
 pub const VM = vm.VM;
 pub const Resolver = resolver.Resolver;
@@ -34,4 +35,5 @@ test {
     std.testing.refAllDecls(vm);
     std.testing.refAllDecls(resolver);
     std.testing.refAllDecls(source);
+    std.testing.refAllDecls(string_pool);
 }

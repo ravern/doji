@@ -9,9 +9,9 @@ const codegen = @import("compile/codegen.zig");
 const Parser = parse.Parser;
 const GC = @import("root.zig").GC;
 const Source = @import("source.zig").Source;
+const StringPool = @import("string_pool.zig").StringPool;
 const Value = @import("value.zig").Value;
 const String = @import("value.zig").String;
-const StringPool = @import("vm.zig").StringPool;
 
 pub const Context = struct {
     allocator: std.mem.Allocator,

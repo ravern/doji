@@ -3,7 +3,7 @@ const code = @import("code.zig");
 const EmptyMutator = @import("gc.zig").MockMutator;
 const GC = @import("root.zig").GC;
 const Source = @import("source.zig").Source;
-const StringPool = @import("vm.zig").StringPool;
+const StringPool = @import("string_pool.zig").StringPool;
 
 pub const Value = struct {
     raw: u64,
