@@ -65,6 +65,14 @@ pub const Value = struct {
         };
     }
 
+    pub fn root(self: Value, gc: *GC) !void {
+        if (self.hasTag(.gc_object)) try gc.root(ptrFromRaw(self.raw));
+    }
+
+    pub fn unroot(self: Value) !void {
+        if (self.hasTag(.gc_object)) GC.unroot(ptrFromRaw(self.raw));
+    }
+
     pub fn trace(self: Value, tracer: *GC.Tracer) !void {
         if (self.hasTag(.gc_object)) try tracer.trace(ptrFromRaw(self.raw));
     }
@@ -412,14 +420,6 @@ pub const Fiber = struct {
                 .foreign_fn => {},
             }
         }
-    }
-
-    pub fn getRoot(self: *Fiber) *Fiber {
-        var curr_fiber = self;
-        while (curr_fiber.parent) |parent_fiber| {
-            curr_fiber = parent_fiber;
-        }
-        return curr_fiber;
     }
 
     pub fn push(self: *Fiber, allocator: std.mem.Allocator, value: Value) !void {

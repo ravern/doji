@@ -34,7 +34,11 @@ pub fn main() !void {
                 else => return err,
             }
         };
-        defer allocator.free(line);
+
+        if (line.len == 0) {
+            allocator.free(line);
+            continue;
+        }
 
         const source = doji.Source.init("<stdin>", line);
 
@@ -43,6 +47,10 @@ pub fn main() !void {
             continue;
         };
 
+        try gc.collect();
+
         try out.print("{}\n", .{result});
+
+        allocator.free(line);
     }
 }

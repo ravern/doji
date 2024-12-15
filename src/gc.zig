@@ -88,6 +88,8 @@ pub fn GC(comptime Object: type) type {
             };
             self.objects.prepend(object_header);
 
+            std.debug.print("created object: {*}, header: {*}\n", .{ object_data, object_header });
+
             return object_data;
         }
 
@@ -182,6 +184,7 @@ pub fn GC(comptime Object: type) type {
             while (curr_object_header) |object_header| : (curr_object_header = object_header.getNext()) {
                 inline for (getUnionFields(Object), 0..) |field, index| {
                     if (object_header.tag == index) {
+                        std.debug.print("deinit object: {*}, header: {*}\n", .{ @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))), object_header });
                         @as(*field.type, @ptrCast(@alignCast(dataFromHeader(object_header)))).deinit(self.child_allocator);
                     }
                 }

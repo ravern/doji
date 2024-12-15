@@ -1,5 +1,5 @@
 const std = @import("std");
-const GC = @import("gc.zig").GC;
+const GC = @import("root.zig").GC;
 const Value = @import("value.zig").Value;
 const Error = @import("value.zig").Error;
 const Source = @import("source.zig").Source;

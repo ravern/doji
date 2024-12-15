@@ -81,8 +81,13 @@ pub const VM = struct {
             .chunk = chunk,
             .upvalues = try self.allocator.alloc(*Upvalue, 0),
         };
+        try self.gc.root(root_closure);
+        defer GC.unroot(root_closure);
+
         const root_fiber = try self.gc.create(Fiber);
         root_fiber.* = Fiber.init();
+        try self.gc.root(root_fiber);
+        defer GC.unroot(root_fiber);
 
         var fiber = root_fiber;
         var frame = Fiber.Frame{
@@ -138,7 +143,13 @@ pub const VM = struct {
                             };
                             try self.call(fiber, &frame, arity, trace_item);
                         },
-                        .ret => return fiber.pop() orelse return Error.CorruptedBytecode,
+                        .ret => {
+                            frame = fiber.popFrame() orelse {
+                                const ret_value = fiber.pop() orelse return Error.CorruptedBytecode;
+                                try ret_value.root(self.gc);
+                                return ret_value;
+                            };
+                        },
 
                         else => unreachable,
                     }
