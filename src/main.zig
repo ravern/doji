@@ -10,6 +10,11 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
+    var gc = doji.GC.init(allocator);
+    defer gc.deinit();
+
+    _ = try gc.create(doji.value.String);
+
     const in = std.io.getStdIn().reader();
     const out = std.io.getStdOut().writer();
 
