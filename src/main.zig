@@ -1,6 +1,11 @@
 const std = @import("std");
 const doji = @import("root.zig");
 
+const Doji = doji.Doji(.{});
+const VM = Doji.VM;
+const GC = Doji.GC;
+const String = Doji.String;
+
 fn readLine(allocator: std.mem.Allocator, reader: anytype) ![]const u8 {
     return reader.readUntilDelimiterAlloc(allocator, '\n', std.math.maxInt(usize));
 }
@@ -10,10 +15,8 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var gc = doji.GC.init(allocator);
+    var gc = GC.init(allocator, allocator);
     defer gc.deinit();
-
-    _ = try gc.create(doji.value.String);
 
     const in = std.io.getStdIn().reader();
     const out = std.io.getStdOut().writer();
@@ -32,6 +35,9 @@ pub fn main() !void {
             }
         };
         defer allocator.free(line);
+
+        const string = try gc.create(String);
+        string.* = try String.initDynamic(allocator, line);
 
         try out.print("{s}\n", .{line});
     }
