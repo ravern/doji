@@ -6,19 +6,25 @@ const vm = @import("vm.zig");
 pub const Config = struct {};
 
 pub fn Doji(comptime config: Config) type {
+    _ = config;
+
     return struct {
         pub const GC = gc.GC(
             .{
                 value.String,
+                value.List,
+                value.Fiber,
             },
             .{
-                .FinalizationContext = std.mem.Allocator,
+                .FinalizeContext = std.mem.Allocator,
             },
         );
 
-        pub const Value = value.Value(GC);
+        pub const Value = value.Value;
         pub const String = value.String;
+        pub const Fiber = value.Fiber;
+        pub const ForeignFn = value.ForeignFn();
 
-        pub const VM = vm.VM(GC, Value, config);
+        pub const VM = vm.VM(GC, Value, .{});
     };
 }

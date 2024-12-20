@@ -1,12 +1,11 @@
 const std = @import("std");
+const code = @import("code.zig");
+const GC = @import("gc.zig").GC;
+const GCConfig = @import("gc.zig").Config;
 
-pub fn Value(comptime GC: type) type {
-    _ = GC;
-
-    return struct {
-        raw: u64,
-    };
-}
+pub const Value = struct {
+    raw: u64,
+};
 
 pub const String = union(enum) {
     const HashMapContext = struct {
@@ -68,3 +67,71 @@ pub const String = union(enum) {
         }
     }
 };
+
+pub const List = struct {
+    data: std.ArrayListUnmanaged(Value) = .{},
+
+    pub fn deinit(self: *List, allocator: std.mem.Allocator) void {
+        self.data.deinit(allocator);
+    }
+
+    pub fn trace(self: *List, tracer: anytype) void {
+        _ = self;
+        _ = tracer;
+    }
+
+    pub fn finalize(self: *List, allocator: std.mem.Allocator) void {
+        self.deinit(allocator);
+    }
+};
+
+pub const Fiber = struct {
+    pub const Frame = union(enum) {
+        closure: ClosureFrame,
+        // foreign_fn: ForeignFnFrame,
+    };
+
+    pub const ClosureFrame = struct {
+        chunk: *const code.Chunk,
+        ip: usize,
+        bp: usize,
+    };
+
+    // pub const ForeignFnFrame = struct {
+    //     foreign_fn: *const ForeignFn,
+    // };
+
+    values: std.ArrayListUnmanaged(Value) = .{},
+    frames: std.ArrayListUnmanaged(Frame) = .{},
+
+    pub fn deinit(self: *Fiber, allocator: std.mem.Allocator) void {
+        self.values.deinit(allocator);
+        self.frames.deinit(allocator);
+    }
+
+    pub fn trace(self: *Fiber, tracer: anytype) void {
+        _ = self;
+        _ = tracer;
+    }
+
+    pub fn finalize(self: *Fiber, allocator: std.mem.Allocator) void {
+        self.deinit(allocator);
+    }
+};
+
+// pub fn ForeignFn(comptime ObjectTypes: anytype, comptime config: GCConfig) type {
+//     return struct {
+//         steps: []const StepFnPtr,
+//         arity: usize,
+
+//         pub const StepFnPtr = *const fn (ctx: *anyopaque) StepFnResult;
+//         pub const StepFnContext = struct {
+//             gc: *GC(ObjectTypes, config),
+//             fiber: *Fiber,
+//         };
+//         pub const StepFnResult = struct {
+//             value: Value,
+//             next: usize,
+//         };
+//     };
+// }

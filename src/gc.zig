@@ -1,12 +1,15 @@
 const std = @import("std");
 
-pub const IncrementalStrategy = union(enum) {
-    fixed: usize,
+pub const Strategy = union(enum) {
+    disable_gc: void,
+    disable_incremental: void,
+    incremental_fixed: usize,
 };
 
 pub const Config = struct {
-    incremental_strategy: IncrementalStrategy = .{ .fixed = 1024 },
-    FinalizationContext: ?type = null,
+    strategy: Strategy = .{ .incremental_fixed = 1024 },
+    FinalizeContext: type = void,
+    enable_stats: bool = true,
 };
 
 pub fn GC(
@@ -15,14 +18,11 @@ pub fn GC(
 ) type {
     comptime verifyObjectTypes(ObjectTypes);
 
-    const FinalizationContext = if (config.FinalizationContext) |FinalizationContext|
-        FinalizationContext
-    else
-        void;
-
     const object_align = @max(@alignOf(ObjectHeader), findMaxAlign(ObjectTypes));
     const object_log2_align = std.math.log2_int(usize, object_align);
     const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
+
+    const FinalizeContext = config.FinalizeContext;
 
     return struct {
         const Self = @This();
@@ -39,6 +39,18 @@ pub fn GC(
             }
         };
 
+        pub const Statistics = if (config.enable_stats)
+            struct {
+                live_objects: usize = 0,
+                created_objects: usize = 0,
+                destroyed_objects: usize = 0,
+                live_bytes: usize = 0,
+                created_bytes: usize = 0,
+                destroyed_bytes: usize = 0,
+            }
+        else
+            void;
+
         pub const Tracer = struct {
             gc: *Self,
 
@@ -51,13 +63,14 @@ pub fn GC(
         };
 
         child_allocator: std.mem.Allocator,
-        finalize_ctx: FinalizationContext,
+        finalize_ctx: FinalizeContext,
         color_state: ColorState = .{},
         all_objects: ObjectHeaderList = .{},
         root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
         gray_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
+        stats: Statistics = .{},
 
-        pub fn init(child_allocator: std.mem.Allocator, finalize_ctx: FinalizationContext) Self {
+        pub fn init(child_allocator: std.mem.Allocator, finalize_ctx: FinalizeContext) Self {
             return Self{
                 .child_allocator = child_allocator,
                 .finalize_ctx = finalize_ctx,
@@ -88,13 +101,20 @@ pub fn GC(
             object_header.* = .{ .color = self.color_state.white, .tag = tag };
             self.all_objects.prepend(object_header);
 
+            if (config.enable_stats) {
+                self.stats.live_objects += 1;
+                self.stats.live_bytes += total_len;
+                self.stats.created_objects += 1;
+                self.stats.created_bytes += total_len;
+            }
+
             return object_data;
         }
 
         pub fn root(self: *Self, object: *anyopaque) !void {
             const object_header = headerFromData(object);
             object_header.is_root = true;
-            try self.root_set.append(object_header);
+            try self.root_set.append(self.child_allocator, object_header);
         }
 
         pub fn unroot(self: *Self, object: *anyopaque) void {
@@ -108,19 +128,37 @@ pub fn GC(
             if (object_header.color == self.color_state.gray)
                 return;
             object_header.color = self.color_state.gray;
-            try self.gray_set.append(object_header);
+            try self.gray_set.append(self.child_allocator, object_header);
         }
 
         pub fn step(self: *Self) !void {
-            try self.markRoots();
-
-            for (0..calculateStepObjectCount()) |_| {
-                const object_header = self.gray_set.popFirst() orelse break;
-                self.blacken(dataFromHeader(object_header));
+            switch (config.strategy) {
+                .disable_gc => return,
+                .disable_incremental => return self.collect(),
+                else => {},
             }
 
+            try self.markRoots();
+
+            for (0..calculateStepObjectCount()) |_|
+                self.blackenNext() orelse break;
             if (self.gray_set.items.len != 0)
                 return;
+
+            self.sweep();
+            self.color_state.swapWhiteBlack();
+        }
+
+        pub fn collect(self: *Self) !void {
+            switch (config.strategy) {
+                .disable_gc => return,
+                else => {},
+            }
+
+            try self.markRoots();
+
+            while (true)
+                self.blackenNext() orelse break;
 
             self.sweep();
             self.color_state.swapWhiteBlack();
@@ -133,14 +171,19 @@ pub fn GC(
 
                 // if the object is not a root, remove it from the root set
                 if (!object_header.is_root) {
-                    self.root_set.swapRemove(i);
+                    _ = self.root_set.swapRemove(i);
                     continue;
                 }
 
                 // otherwise, mark the root
-                self.mark(dataFromHeader(object_header));
+                try self.mark(dataFromHeader(object_header));
                 i += 1;
             }
+        }
+
+        fn blackenNext(self: *Self) ?void {
+            const object_header = self.gray_set.popOrNull() orelse return null;
+            self.blacken(dataFromHeader(object_header));
         }
 
         fn blacken(self: *Self, object: *anyopaque) void {
@@ -162,6 +205,7 @@ pub fn GC(
                         curr_object_header = prev.getNext();
                     } else {
                         curr_object_header = curr.getNext();
+                        self.all_objects.first = curr_object_header;
                     }
 
                     // add the object to the white set, and finalize it at the same time (instead
@@ -185,6 +229,13 @@ pub fn GC(
         fn destroyObjectHeader(self: *Self, object_header: *ObjectHeader) void {
             const total_len = object_header_len + objectSizeFromTag(ObjectTypes, object_header.tag);
             self.child_allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
+
+            if (config.enable_stats) {
+                self.stats.live_objects -= 1;
+                self.stats.live_bytes -= total_len;
+                self.stats.destroyed_objects += 1;
+                self.stats.destroyed_bytes += total_len;
+            }
         }
 
         fn traceObject(object_data: *anyopaque, tracer: *Tracer) void {
@@ -192,14 +243,15 @@ pub fn GC(
             callObjectMethod(ObjectTypes, object_header.tag, object_data, "trace", tracer);
         }
 
-        fn finalizeObject(object_data: *anyopaque, finalize_ctx: FinalizationContext) void {
+        fn finalizeObject(object_data: *anyopaque, finalize_ctx: FinalizeContext) void {
             const object_header = headerFromData(object_data);
             callObjectMethod(ObjectTypes, object_header.tag, object_data, "finalize", finalize_ctx);
         }
 
         inline fn calculateStepObjectCount() usize {
-            return switch (config.incremental_strategy) {
-                .fixed => |count| count,
+            return switch (config.strategy) {
+                .incremental_fixed => |count| count,
+                else => unreachable,
             };
         }
 
