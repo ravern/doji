@@ -2,34 +2,25 @@ const std = @import("std");
 
 pub fn build(b: *std.Build) void {
     const root_path = b.path("src/root.zig");
-    const main_path = b.path("src/main.zig");
 
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --------------------- executable -----------------------
+    // --------------------- user options --------------------
 
-    const lib = b.addStaticLibrary(.{
-        .name = "doji",
+    const gc_increment_size = b.option(usize, "gc_increment_size", "number of objects to mark per increment") orelse 1024;
+
+    const options = b.addOptions();
+    options.addOption(usize, "gc_increment_size", gc_increment_size);
+
+    // ----------------------- module ------------------------
+
+    const module = b.addModule("doji", .{
         .root_source_file = root_path,
         .target = target,
         .optimize = optimize,
     });
-    b.installArtifact(lib);
-
-    const exe = b.addExecutable(.{
-        .name = "doji",
-        .root_source_file = main_path,
-        .target = target,
-        .optimize = optimize,
-    });
-    b.installArtifact(exe);
-
-    const run_exe = b.addRunArtifact(exe);
-    run_exe.step.dependOn(&exe.step);
-
-    const run_step = b.step("run", "Run the executable");
-    run_step.dependOn(&run_exe.step);
+    module.addImport("build_options", options.createModule());
 
     // ----------------------- tests -------------------------
 
@@ -39,6 +30,8 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
     const run_tests = b.addRunArtifact(tests);
+
+    // ----------------------- steps -------------------------
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_tests.step);

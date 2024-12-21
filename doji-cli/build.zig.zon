@@ -1,0 +1,14 @@
+.{
+    .name = "doji-cli",
+    .version = "0.0.1",
+    .dependencies = .{
+        .doji = .{
+            .path = "../doji",
+        },
+    },
+    .paths = .{
+        "build.zig",
+        "build.zig.zon",
+        "src",
+    },
+}

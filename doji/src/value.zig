@@ -1,7 +1,6 @@
 const std = @import("std");
 const code = @import("code.zig");
-const GC = @import("gc.zig").GC;
-const GCConfig = @import("gc.zig").Config;
+const GC = @import("root.zig").GC;
 
 pub const Value = struct {
     raw: u64,
@@ -119,19 +118,17 @@ pub const Fiber = struct {
     }
 };
 
-// pub fn ForeignFn(comptime ObjectTypes: anytype, comptime config: GCConfig) type {
-//     return struct {
-//         steps: []const StepFnPtr,
-//         arity: usize,
+pub const ForeignFn = struct {
+    steps: []const StepFnPtr,
+    arity: usize,
 
-//         pub const StepFnPtr = *const fn (ctx: *anyopaque) StepFnResult;
-//         pub const StepFnContext = struct {
-//             gc: *GC(ObjectTypes, config),
-//             fiber: *Fiber,
-//         };
-//         pub const StepFnResult = struct {
-//             value: Value,
-//             next: usize,
-//         };
-//     };
-// }
+    pub const StepFnPtr = *const fn (ctx: *anyopaque) StepFnResult;
+    pub const StepFnContext = struct {
+        gc: *GC,
+        fiber: *Fiber,
+    };
+    pub const StepFnResult = struct {
+        value: Value,
+        next: usize,
+    };
+};
