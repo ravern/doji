@@ -1,5 +1,5 @@
 const std = @import("std");
-const doji = @import("root.zig");
+const doji = @import("doji");
 
 fn readLine(allocator: std.mem.Allocator, reader: anytype) ![]const u8 {
     return reader.readUntilDelimiterAlloc(allocator, '\n', std.math.maxInt(usize));

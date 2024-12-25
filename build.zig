@@ -1,45 +1,48 @@
 const std = @import("std");
 
 pub fn build(b: *std.Build) void {
-    const root_path = b.path("src/root.zig");
-    const main_path = b.path("src/main.zig");
-
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --------------------- executable -----------------------
+    // ------------------- Zig module ------------------------
 
-    const lib = b.addStaticLibrary(.{
+    const module = b.addModule("doji", .{
+        .root_source_file = b.path("src/doji.zig"),
+        .target = target,
+        .optimize = optimize,
+        .imports = &.{},
+    });
+
+    // ----------------- REPL executable ---------------------
+
+    const repl_exe = b.addExecutable(.{
         .name = "doji",
-        .root_source_file = root_path,
+        .root_source_file = b.path("src/repl.zig"),
         .target = target,
         .optimize = optimize,
     });
-    b.installArtifact(lib);
+    repl_exe.root_module.addImport("doji", module);
 
-    const exe = b.addExecutable(.{
-        .name = "doji",
-        .root_source_file = main_path,
-        .target = target,
-        .optimize = optimize,
-    });
-    b.installArtifact(exe);
+    const repl_install = b.addInstallArtifact(repl_exe, .{});
+    repl_install.step.dependOn(&repl_exe.step);
 
-    const run_exe = b.addRunArtifact(exe);
-    run_exe.step.dependOn(&exe.step);
+    const repl_run = b.addRunArtifact(repl_exe);
+    repl_run.step.dependOn(&repl_install.step);
 
-    const run_step = b.step("run", "Run the executable");
-    run_step.dependOn(&run_exe.step);
+    const repl_step = b.step("repl", "Start a REPL session");
+    repl_step.dependOn(&repl_run.step);
 
     // ----------------------- tests -------------------------
 
-    const tests = b.addTest(.{
-        .root_source_file = root_path,
+    const tests_exe = b.addTest(.{
+        .root_source_file = b.path("src/doji.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const run_tests = b.addRunArtifact(tests);
 
-    const test_step = b.step("test", "Run unit tests");
-    test_step.dependOn(&run_tests.step);
+    const tests_run = b.addRunArtifact(tests_exe);
+    tests_run.step.dependOn(&tests_exe.step);
+
+    const tests_step = b.step("test", "Run unit tests");
+    tests_step.dependOn(&tests_run.step);
 }
