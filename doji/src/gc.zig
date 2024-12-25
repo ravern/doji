@@ -1,239 +1,213 @@
 const std = @import("std");
-const build_options = @import("build_options");
-const dev_options = @import("dev_options.zig");
+const value = @import("value.zig");
+const meta = @import("gc/meta.zig");
 
-pub fn GC(
-    comptime ObjectTypes: anytype,
-    comptime FinalizeContext: type,
-) type {
-    comptime verifyObjectTypes(ObjectTypes);
+const object_types = .{
+    value.String,
+    value.List,
+    value.Fiber,
+};
 
-    const object_align = @max(@alignOf(ObjectHeader), findMaxAlign(ObjectTypes));
-    const object_log2_align = std.math.log2_int(usize, object_align);
-    const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
+comptime {
+    meta.verifyObjectTypes(object_types);
+}
 
-    return struct {
-        const Self = @This();
+const object_align = @max(@alignOf(ObjectHeader), meta.findMaxAlign(object_types));
+const object_log2_align = std.math.log2_int(usize, object_align);
+const object_header_len = std.mem.alignForward(usize, @sizeOf(ObjectHeader), object_align);
 
-        const ColorState = struct {
-            white: Color = 0,
-            black: Color = 1,
-            gray: Color = 2,
+pub const Tracer = struct {
+    gc: *GC,
 
-            fn swapWhiteBlack(self: *ColorState) void {
-                const tmp = self.white;
-                self.white = self.black;
-                self.black = tmp;
-            }
-        };
+    fn trace(self: *Tracer, object: *anyopaque) void {
+        const object_header = headerFromData(object);
+        if (object_header.color == self.gc.color_state.black)
+            return;
+        self.gc.mark(object);
+    }
+};
 
-        pub const Statistics = if (dev_options.gc_enable_trace)
-            struct {
-                live_objects: usize = 0,
-                created_objects: usize = 0,
-                destroyed_objects: usize = 0,
-                live_bytes: usize = 0,
-                created_bytes: usize = 0,
-                destroyed_bytes: usize = 0,
-            }
-        else
-            void;
+pub const FinalizeContext = struct {
+    allocator: std.mem.Allocator,
+};
 
-        pub const Tracer = struct {
-            gc: *Self,
+pub const GC = struct {
+    pub const Config = struct {};
 
-            fn trace(self: *Tracer, object: *anyopaque) void {
-                const object_header = headerFromData(object);
-                if (object_header.color == self.gc.color_state.black)
-                    return;
-                self.gc.mark(object);
-            }
-        };
+    const ColorState = struct {
+        white: ObjectColor = 0,
+        black: ObjectColor = 1,
+        gray: ObjectColor = 2,
 
-        child_allocator: std.mem.Allocator,
-        finalize_ctx: FinalizeContext,
-        color_state: ColorState = .{},
-        all_objects: ObjectHeaderList = .{},
-        root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
-        gray_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
-        stats: Statistics = if (dev_options.gc_enable_trace) .{} else ({}),
-
-        pub fn init(child_allocator: std.mem.Allocator, finalize_ctx: FinalizeContext) Self {
-            return Self{
-                .child_allocator = child_allocator,
-                .finalize_ctx = finalize_ctx,
-            };
-        }
-
-        pub fn deinit(self: *Self) void {
-            self.root_set.deinit(self.child_allocator);
-            self.gray_set.deinit(self.child_allocator);
-
-            var curr_object_header = self.all_objects.first;
-            while (curr_object_header) |curr| : (curr_object_header = curr.getNext())
-                finalizeObject(dataFromHeader(curr), self.finalize_ctx);
-            self.destroyObjectHeaderList(&self.all_objects);
-
-            self.* = undefined;
-        }
-
-        pub fn create(self: *Self, comptime ObjectType: type) !*ObjectType {
-            const tag = tagFromObjectType(ObjectTypes, ObjectType);
-
-            const total_len = object_header_len + @sizeOf(ObjectType);
-            const ptr = self.child_allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse
-                return std.mem.Allocator.Error.OutOfMemory;
-            const object_header = @as(*ObjectHeader, @ptrCast(@alignCast(ptr)));
-            const object_data = @as(*ObjectType, @ptrCast(@alignCast(ptr[object_header_len..])));
-
-            object_header.* = .{ .color = self.color_state.white, .tag = tag };
-            self.all_objects.prepend(object_header);
-
-            if (dev_options.gc_enable_trace) {
-                self.stats.live_objects += 1;
-                self.stats.live_bytes += total_len;
-                self.stats.created_objects += 1;
-                self.stats.created_bytes += total_len;
-            }
-
-            return object_data;
-        }
-
-        pub fn root(self: *Self, object: *anyopaque) !void {
-            const object_header = headerFromData(object);
-            object_header.is_root = true;
-            try self.root_set.append(self.child_allocator, object_header);
-        }
-
-        pub fn unroot(self: *Self, object: *anyopaque) void {
-            _ = self;
-            const object_header = headerFromData(object);
-            object_header.is_root = false;
-        }
-
-        pub fn mark(self: *Self, object: *anyopaque) !void {
-            const object_header = headerFromData(object);
-            if (object_header.color == self.color_state.gray)
-                return;
-            object_header.color = self.color_state.gray;
-            try self.gray_set.append(self.child_allocator, object_header);
-        }
-
-        pub fn step(self: *Self) !void {
-            try self.markRoots();
-
-            for (0..build_options.gc_increment_size) |_|
-                self.blackenNext() orelse break;
-            if (self.gray_set.items.len != 0)
-                return;
-
-            self.sweep();
-            self.color_state.swapWhiteBlack();
-        }
-
-        pub fn collect(self: *Self) !void {
-            try self.markRoots();
-
-            while (true)
-                self.blackenNext() orelse break;
-
-            self.sweep();
-            self.color_state.swapWhiteBlack();
-        }
-
-        fn markRoots(self: *Self) !void {
-            var i: usize = 0;
-            while (i < self.root_set.items.len) {
-                const object_header = self.root_set.items[i];
-
-                // if the object is not a root, remove it from the root set
-                if (!object_header.is_root) {
-                    _ = self.root_set.swapRemove(i);
-                    continue;
-                }
-
-                // otherwise, mark the root
-                try self.mark(dataFromHeader(object_header));
-                i += 1;
-            }
-        }
-
-        fn blackenNext(self: *Self) ?void {
-            const object_header = self.gray_set.popOrNull() orelse return null;
-            self.blacken(dataFromHeader(object_header));
-        }
-
-        fn blacken(self: *Self, object: *anyopaque) void {
-            const object_header = headerFromData(object);
-            var tracer = Tracer{ .gc = self };
-            traceObject(object, &tracer);
-            object_header.color = self.color_state.black;
-        }
-
-        fn sweep(self: *Self) void {
-            var white_objects = ObjectHeaderList{};
-
-            var prev_object_header: ?*ObjectHeader = null;
-            var curr_object_header = self.all_objects.first;
-            while (curr_object_header) |curr| {
-                if (curr.color == self.color_state.white) {
-                    if (prev_object_header) |prev| {
-                        prev.removeNext();
-                        curr_object_header = prev.getNext();
-                    } else {
-                        curr_object_header = curr.getNext();
-                        self.all_objects.first = curr_object_header;
-                    }
-
-                    // add the object to the white set, and finalize it at the same time (instead
-                    // of a second loop to finalize all white objects).
-                    white_objects.prepend(curr);
-                    finalizeObject(dataFromHeader(curr), self.finalize_ctx);
-                } else {
-                    prev_object_header = curr;
-                    curr_object_header = curr.getNext();
-                }
-            }
-
-            self.destroyObjectHeaderList(&white_objects);
-        }
-
-        fn destroyObjectHeaderList(self: *Self, list: *ObjectHeaderList) void {
-            while (list.popFirst()) |object_header|
-                self.destroyObjectHeader(object_header);
-        }
-
-        fn destroyObjectHeader(self: *Self, object_header: *ObjectHeader) void {
-            const total_len = object_header_len + objectSizeFromTag(ObjectTypes, object_header.tag);
-            self.child_allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
-
-            if (dev_options.gc_enable_trace) {
-                self.stats.live_objects -= 1;
-                self.stats.live_bytes -= total_len;
-                self.stats.destroyed_objects += 1;
-                self.stats.destroyed_bytes += total_len;
-            }
-        }
-
-        fn traceObject(object_data: *anyopaque, tracer: *Tracer) void {
-            const object_header = headerFromData(object_data);
-            callObjectMethod(ObjectTypes, object_header.tag, object_data, "trace", tracer);
-        }
-
-        fn finalizeObject(object_data: *anyopaque, finalize_ctx: FinalizeContext) void {
-            const object_header = headerFromData(object_data);
-            callObjectMethod(ObjectTypes, object_header.tag, object_data, "finalize", finalize_ctx);
-        }
-
-        inline fn headerFromData(data: *anyopaque) *ObjectHeader {
-            return @ptrFromInt(@intFromPtr(data) - object_header_len);
-        }
-
-        inline fn dataFromHeader(header: *ObjectHeader) *anyopaque {
-            return @ptrFromInt(@intFromPtr(header) + object_header_len);
+        fn swapWhiteBlack(self: *ColorState) void {
+            const tmp = self.white;
+            self.white = self.black;
+            self.black = tmp;
         }
     };
-}
+
+    child_allocator: std.mem.Allocator,
+    config: Config,
+    finalize_ctx: FinalizeContext,
+    color_state: ColorState = .{},
+    all_objects: ObjectHeaderList = .{},
+    root_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
+    gray_set: std.ArrayListUnmanaged(*ObjectHeader) = .{},
+
+    pub fn init(child_allocator: std.mem.Allocator, config: Config, finalize_ctx: FinalizeContext) GC {
+        return .{
+            .child_allocator = child_allocator,
+            .config = config,
+            .finalize_ctx = finalize_ctx,
+        };
+    }
+
+    pub fn deinit(self: *GC) void {
+        self.root_set.deinit(self.child_allocator);
+        self.gray_set.deinit(self.child_allocator);
+
+        var curr_object_header = self.all_objects.first;
+        while (curr_object_header) |curr| : (curr_object_header = curr.getNext())
+            finalizeObject(dataFromHeader(curr), self.finalize_ctx);
+        self.destroyObjectHeaderList(&self.all_objects);
+
+        self.* = undefined;
+    }
+
+    pub fn create(self: *GC, comptime ObjectType: type) !*ObjectType {
+        const tag = meta.tagFromObjectType(object_types, ObjectType, ObjectTag);
+
+        const total_len = object_header_len + @sizeOf(ObjectType);
+        const ptr = self.child_allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse
+            return std.mem.Allocator.Error.OutOfMemory;
+        const object_header = @as(*ObjectHeader, @ptrCast(@alignCast(ptr)));
+        const object_data = @as(*ObjectType, @ptrCast(@alignCast(ptr[object_header_len..])));
+
+        object_header.* = .{ .color = self.color_state.white, .tag = tag };
+        self.all_objects.prepend(object_header);
+
+        return object_data;
+    }
+
+    pub fn root(self: *GC, object: *anyopaque) !void {
+        const object_header = headerFromData(object);
+        object_header.is_root = true;
+        try self.root_set.append(self.child_allocator, object_header);
+    }
+
+    pub fn unroot(self: *GC, object: *anyopaque) void {
+        _ = self;
+        const object_header = headerFromData(object);
+        object_header.is_root = false;
+    }
+
+    pub fn mark(self: *GC, object: *anyopaque) !void {
+        const object_header = headerFromData(object);
+        if (object_header.color == self.color_state.gray)
+            return;
+        object_header.color = self.color_state.gray;
+        try self.gray_set.append(self.child_allocator, object_header);
+    }
+
+    pub fn step(self: *GC) !void {
+        try self.markRoots();
+
+        for (0..2048) |_|
+            self.blackenNext() orelse break;
+        if (self.gray_set.items.len != 0)
+            return;
+
+        self.sweep();
+        self.color_state.swapWhiteBlack();
+    }
+
+    pub fn collect(self: *GC) !void {
+        try self.markRoots();
+
+        while (true)
+            self.blackenNext() orelse break;
+
+        self.sweep();
+        self.color_state.swapWhiteBlack();
+    }
+
+    fn markRoots(self: *GC) !void {
+        var i: usize = 0;
+        while (i < self.root_set.items.len) {
+            const object_header = self.root_set.items[i];
+
+            // if the object is not a root, remove it from the root set
+            if (!object_header.is_root) {
+                _ = self.root_set.swapRemove(i);
+                continue;
+            }
+
+            // otherwise, mark the root
+            try self.mark(dataFromHeader(object_header));
+            i += 1;
+        }
+    }
+
+    fn blackenNext(self: *GC) ?void {
+        const object_header = self.gray_set.popOrNull() orelse return null;
+        self.blacken(dataFromHeader(object_header));
+    }
+
+    fn blacken(self: *GC, object: *anyopaque) void {
+        const object_header = headerFromData(object);
+        var tracer = Tracer{ .gc = self };
+        traceObject(object, &tracer);
+        object_header.color = self.color_state.black;
+    }
+
+    fn sweep(self: *GC) void {
+        var white_objects = ObjectHeaderList{};
+
+        var prev_object_header: ?*ObjectHeader = null;
+        var curr_object_header = self.all_objects.first;
+        while (curr_object_header) |curr| {
+            if (curr.color == self.color_state.white) {
+                if (prev_object_header) |prev| {
+                    prev.removeNext();
+                    curr_object_header = prev.getNext();
+                } else {
+                    curr_object_header = curr.getNext();
+                    self.all_objects.first = curr_object_header;
+                }
+
+                // add the object to the white set, and finalize it at the same time (instead
+                // of a second loop to finalize all white objects).
+                white_objects.prepend(curr);
+                finalizeObject(dataFromHeader(curr), self.finalize_ctx);
+            } else {
+                prev_object_header = curr;
+                curr_object_header = curr.getNext();
+            }
+        }
+
+        self.destroyObjectHeaderList(&white_objects);
+    }
+
+    fn destroyObjectHeaderList(self: *GC, list: *ObjectHeaderList) void {
+        while (list.popFirst()) |object_header|
+            self.destroyObjectHeader(object_header);
+    }
+
+    fn destroyObjectHeader(self: *GC, object_header: *ObjectHeader) void {
+        const total_len = object_header_len + meta.objectSizeFromTag(object_types, ObjectTag, object_header.tag);
+        self.child_allocator.rawFree(@as([*]u8, @ptrCast(object_header))[0..total_len], object_log2_align, @returnAddress());
+    }
+
+    fn traceObject(object_data: *anyopaque, tracer: *Tracer) void {
+        const object_header = headerFromData(object_data);
+        meta.callObjectMethod(object_types, ObjectTag, object_header.tag, object_data, "trace", tracer);
+    }
+
+    fn finalizeObject(object_data: *anyopaque, finalize_ctx: FinalizeContext) void {
+        const object_header = headerFromData(object_data);
+        meta.callObjectMethod(object_types, ObjectTag, object_header.tag, object_data, "finalize", finalize_ctx);
+    }
+};
 
 const ObjectHeaderList = struct {
     first: ?*ObjectHeader = null,
@@ -250,16 +224,16 @@ const ObjectHeaderList = struct {
     }
 };
 
-const Color = u2;
-const Tag = u8;
-const Ptr = u48;
+const ObjectColor = u2;
+const ObjectTag = u8;
+const ObjectRawPtr = u48;
 
 const ObjectHeader = packed struct {
     is_root: bool = false,
-    color: Color,
+    color: ObjectColor,
     _pad: u5 = undefined,
-    tag: Tag,
-    next: Ptr = 0, // null
+    tag: ObjectTag,
+    next: ObjectRawPtr = 0, // null
 
     pub fn getNext(self: *ObjectHeader) ?*ObjectHeader {
         return @ptrFromInt(@as(usize, @intCast(self.next)));
@@ -275,88 +249,10 @@ const ObjectHeader = packed struct {
     }
 };
 
-fn buildObjectTypeMap(comptime ObjectTypes: anytype) [ObjectTypes.len]type {
-    const fields = getFields(ObjectTypes);
-    var map: [ObjectTypes.len]type = undefined;
-    for (fields, 0..) |field, tag| {
-        const ObjectType = @field(ObjectTypes, field.name);
-        map[tag] = ObjectType;
-    }
-    return map;
+inline fn headerFromData(data: *anyopaque) *ObjectHeader {
+    return @ptrFromInt(@intFromPtr(data) - object_header_len);
 }
 
-fn tagFromObjectType(comptime ObjectTypes: anytype, comptime ObjectType: type) Tag {
-    const object_type_map = buildObjectTypeMap(ObjectTypes);
-    inline for (object_type_map, 0..) |object_type, tag| {
-        if (ObjectType == object_type)
-            return tag;
-    }
-    @compileError("unsupported object type '" ++ @typeName(ObjectType) ++ "'");
-}
-
-fn objectSizeFromTag(comptime ObjectTypes: anytype, tag: Tag) usize {
-    inline for (getFields(ObjectTypes)) |field| {
-        const ObjectType = @field(ObjectTypes, field.name);
-        if (tag == tagFromObjectType(ObjectTypes, ObjectType)) {
-            return @sizeOf(ObjectType);
-        }
-    }
-    unreachable;
-}
-
-// TODO: extend to accept multiple arguments
-fn callObjectMethod(
-    comptime ObjectTypes: anytype,
-    tag: Tag,
-    object: *anyopaque,
-    comptime method_name: []const u8,
-    arg: anytype,
-) void {
-    inline for (getFields(ObjectTypes)) |field| {
-        const ObjectType = @field(ObjectTypes, field.name);
-        if (tag == tagFromObjectType(ObjectTypes, ObjectType)) {
-            @field(ObjectType, method_name)(@as(*ObjectType, @ptrCast(@alignCast(object))), arg);
-            return;
-        }
-    }
-    unreachable;
-}
-
-fn findMaxAlign(comptime ObjectTypes: anytype) usize {
-    const fields = getFields(ObjectTypes);
-    comptime var max_align = 0;
-    inline for (fields) |field| {
-        const ObjectType = @field(ObjectTypes, field.name);
-        max_align = @max(max_align, @alignOf(ObjectType));
-    }
-    return max_align;
-}
-
-fn getFields(comptime ObjectTypes: anytype) []const std.builtin.Type.StructField {
-    return @typeInfo(@TypeOf(ObjectTypes)).Struct.fields;
-}
-
-fn verifyObjectTypes(comptime ObjectTypes: anytype) void {
-    const info = @typeInfo(@TypeOf(ObjectTypes));
-    switch (info) {
-        .Struct => |struct_info| {
-            const max_type_count = std.math.maxInt(Tag) - 1;
-            if (struct_info.fields.len > max_type_count)
-                @compileError("too many object types, a max of " ++ max_type_count ++ " is supported");
-            for (struct_info.fields) |field| {
-                const ObjectType = @field(ObjectTypes, field.name);
-                comptime verifyObjectType(ObjectType);
-            }
-            return;
-        },
-        else => {},
-    }
-    @compileError("expected an anonymous struct literal containing object types");
-}
-
-fn verifyObjectType(comptime ObjectType: type) void {
-    const has_trace = @hasDecl(ObjectType, "trace");
-    const has_finalize = @hasDecl(ObjectType, "finalize");
-    if (!has_trace or !has_finalize)
-        @compileError("expected object type '" ++ @typeName(ObjectType) ++ "' to have trace and finalize member functions");
+inline fn dataFromHeader(header: *ObjectHeader) *anyopaque {
+    return @ptrFromInt(@intFromPtr(header) + object_header_len);
 }

@@ -6,21 +6,13 @@ pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
 
-    // --------------------- user options --------------------
-
-    const gc_increment_size = b.option(usize, "gc_increment_size", "number of objects to mark per increment") orelse 1024;
-
-    const options = b.addOptions();
-    options.addOption(usize, "gc_increment_size", gc_increment_size);
-
     // ----------------------- module ------------------------
 
-    const module = b.addModule("doji", .{
+    _ = b.addModule("doji", .{
         .root_source_file = root_path,
         .target = target,
         .optimize = optimize,
     });
-    module.addImport("build_options", options.createModule());
 
     // ----------------------- tests -------------------------
 

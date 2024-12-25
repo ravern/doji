@@ -9,7 +9,6 @@ pub fn build(b: *std.Build) void {
     const doji = b.dependency("doji", .{
         .target = target,
         .optimize = optimize,
-        .gc_increment_size = @as(usize, 2048),
     });
 
     // ---------------------- executable ---------------------

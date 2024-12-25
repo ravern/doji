@@ -1,6 +1,8 @@
 const std = @import("std");
 const code = @import("code.zig");
-const GC = @import("root.zig").GC;
+const GC = @import("gc.zig").GC;
+const FinalizeContext = @import("gc.zig").FinalizeContext;
+const Tracer = @import("gc.zig").Tracer;
 
 pub const Value = struct {
     raw: u64,
@@ -41,13 +43,13 @@ pub const String = union(enum) {
         self.* = undefined;
     }
 
-    pub fn trace(self: *String, tracer: anytype) void {
+    pub fn trace(self: *String, tracer: *Tracer) void {
         _ = self;
         _ = tracer;
     }
 
-    pub fn finalize(self: *String, allocator: std.mem.Allocator) void {
-        self.deinit(allocator);
+    pub fn finalize(self: *String, finalize_ctx: FinalizeContext) void {
+        self.deinit(finalize_ctx.allocator);
     }
 
     pub fn get(self: *const String) []const u8 {
@@ -74,13 +76,13 @@ pub const List = struct {
         self.data.deinit(allocator);
     }
 
-    pub fn trace(self: *List, tracer: anytype) void {
+    pub fn trace(self: *List, tracer: *Tracer) void {
         _ = self;
         _ = tracer;
     }
 
-    pub fn finalize(self: *List, allocator: std.mem.Allocator) void {
-        self.deinit(allocator);
+    pub fn finalize(self: *List, finalize_ctx: FinalizeContext) void {
+        self.deinit(finalize_ctx.allocator);
     }
 };
 
@@ -108,13 +110,13 @@ pub const Fiber = struct {
         self.frames.deinit(allocator);
     }
 
-    pub fn trace(self: *Fiber, tracer: anytype) void {
+    pub fn trace(self: *Fiber, tracer: *Tracer) void {
         _ = self;
         _ = tracer;
     }
 
-    pub fn finalize(self: *Fiber, allocator: std.mem.Allocator) void {
-        self.deinit(allocator);
+    pub fn finalize(self: *Fiber, finalize_ctx: FinalizeContext) void {
+        self.deinit(finalize_ctx.allocator);
     }
 };
 

@@ -10,7 +10,7 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    var gc = doji.GC.init(allocator, allocator);
+    var gc = doji.GC.init(allocator, .{}, .{ .allocator = allocator });
     defer gc.deinit();
 
     const in = std.io.getStdIn().reader();
