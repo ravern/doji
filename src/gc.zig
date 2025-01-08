@@ -1,12 +1,13 @@
 const std = @import("std");
-const String = @import("value.zig").String;
+const value = @import("value.zig");
 
 pub const FinalizeContext = struct {
     allocator: std.mem.Allocator,
 };
 
 const object_types = [_]type{
-    String,
+    value.List,
+    value.String,
 };
 
 const object_align = findMaxAlign();
@@ -180,9 +181,8 @@ pub const GC = struct {
     pub fn create(self: *GC, comptime T: type) !*T {
         std.debug.print("object_align: {d}\n", .{object_align});
         const total_len = object_header_len + @sizeOf(T);
-        const ptr = self.child_allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse {
+        const ptr = self.child_allocator.rawAlloc(total_len, object_log2_align, @returnAddress()) orelse
             return std.mem.Allocator.Error.OutOfMemory;
-        };
         const header = @as(*ObjectHeader, @ptrCast(@alignCast(ptr)));
         header.* = .{ .color = self.color_state.white, .tag = tagFromObjectType(T) };
         self.all_objects.prepend(header);

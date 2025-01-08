@@ -34,7 +34,9 @@ pub fn main() !void {
         const line_string = try gc.create(doji.value.String);
         line_string.* = doji.value.String{ .gc = try allocator.dupe(u8, line) };
 
-        try out.print("{s}\n", .{line_string.toStr()});
+        const value = doji.Value.init(line_string);
+
+        try out.print("{s}\n", .{value.cast(*doji.value.String).?.toStr()});
 
         try gc.step();
     }
