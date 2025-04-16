@@ -1,3 +1,3 @@
 # Dōji
 
-Practical scripting language for Zig.
+Practical scripting language for Rust.
