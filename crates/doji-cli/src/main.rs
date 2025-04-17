@@ -1,5 +1,9 @@
-use doji::add;
+use doji::Engine;
 
 fn main() {
-    println!("3 + 4 = {}", add(3, 4));
+    let engine = Engine::new();
+    match engine.run("3 + 4").and_then(i64::try_from) {
+        Ok(result) => println!("3 + 4 = {}", result),
+        Err(error) => eprintln!("error: {}", error),
+    }
 }
