@@ -1,15 +1,19 @@
-use gc_arena::Gc;
+use gc_arena::{Collect, Gc};
 
-use crate::error::Error;
+use crate::{error::Error, function::Function};
 
+#[derive(Collect)]
+#[collect(no_drop)]
 pub enum Value<'gc> {
+    Nil,
     Bool(bool),
     Int(i64),
     Float(f64),
     String(Gc<'gc, String>),
+    Closure(Gc<'gc, Closure<'gc>>),
 }
 
-impl TryFrom<Value<'_>> for bool {
+impl<'gc> TryFrom<Value<'gc>> for bool {
     type Error = Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -20,7 +24,7 @@ impl TryFrom<Value<'_>> for bool {
     }
 }
 
-impl TryFrom<Value<'_>> for i64 {
+impl<'gc> TryFrom<Value<'gc>> for i64 {
     type Error = Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -31,7 +35,7 @@ impl TryFrom<Value<'_>> for i64 {
     }
 }
 
-impl TryFrom<Value<'_>> for f64 {
+impl<'gc> TryFrom<Value<'gc>> for f64 {
     type Error = Error;
 
     fn try_from(value: Value) -> Result<Self, Self::Error> {
@@ -51,4 +55,18 @@ impl<'gc> TryFrom<Value<'gc>> for String {
             _ => Err(Error::WrongType),
         }
     }
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+pub struct Closure<'gc> {
+    function: Gc<'gc, Function<'gc>>,
+    upvalues: Box<[Upvalue<'gc>]>,
+}
+
+#[derive(Collect)]
+#[collect(no_drop)]
+pub enum Upvalue<'gc> {
+    Open(usize),
+    Closed(Value<'gc>),
 }
