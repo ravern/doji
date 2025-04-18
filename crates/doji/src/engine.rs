@@ -1,9 +1,10 @@
-use gc_arena::{Arena, Collect, Gc, Mutation, Rootable};
+use gc_arena::{Arena, Collect, Gc, Mutation, Rootable, lock::RefLock};
 
 use crate::{
     error::Error,
     fiber::{self, Fiber},
-    value::Value,
+    function::{self, opcode},
+    value::{Closure, Value},
 };
 
 pub struct Engine {
@@ -14,7 +15,24 @@ impl Engine {
     pub fn new() -> Self {
         Engine {
             arena: Arena::new(|mc| State {
-                active_fiber: Gc::new(mc, Fiber::new()),
+                root_fiber: Gc::new(
+                    mc,
+                    RefLock::new(Fiber::new(Gc::new(
+                        mc,
+                        Closure::new(
+                            Gc::new(mc, {
+                                let mut builder = function::Builder::new();
+                                builder.instruction(opcode::INT, 3);
+                                builder.instruction(opcode::INT, 4);
+                                builder.instruction(opcode::ADD, 0);
+                                builder.instruction(opcode::RETURN, 0);
+                                builder.arity(0);
+                                builder.build()
+                            }),
+                            Box::new([]),
+                        ),
+                    ))),
+                ),
             }),
         }
     }
@@ -35,7 +53,7 @@ impl Engine {
 #[derive(Collect)]
 #[collect(no_drop)]
 struct State<'gc> {
-    active_fiber: Gc<'gc, Fiber<'gc>>,
+    root_fiber: Gc<'gc, RefLock<Fiber<'gc>>>,
 }
 
 impl<'gc> State<'gc> {
@@ -43,7 +61,7 @@ impl<'gc> State<'gc> {
     where
         T: TryFrom<Value<'gc>, Error = Error>,
     {
-        match self.active_fiber.step(mc)? {
+        match self.root_fiber.borrow_mut(mc).step(mc)? {
             fiber::Step::Yield(value) => Ok(Step::Continue),
             fiber::Step::Done(value) => value.try_into().map(Step::Done),
         }

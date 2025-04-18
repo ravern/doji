@@ -2,7 +2,7 @@ use gc_arena::{Collect, Gc};
 
 use crate::{error::Error, function::Function};
 
-#[derive(Collect)]
+#[derive(Clone, Collect)]
 #[collect(no_drop)]
 pub enum Value<'gc> {
     Nil,
@@ -61,7 +61,21 @@ impl<'gc> TryFrom<Value<'gc>> for String {
 #[collect(no_drop)]
 pub struct Closure<'gc> {
     function: Gc<'gc, Function<'gc>>,
-    upvalues: Box<[Upvalue<'gc>]>,
+    upvalues: Box<[Gc<'gc, Upvalue<'gc>>]>,
+}
+
+impl<'gc> Closure<'gc> {
+    pub fn new(function: Gc<'gc, Function<'gc>>, upvalues: Box<[Gc<'gc, Upvalue<'gc>>]>) -> Self {
+        Closure { function, upvalues }
+    }
+
+    pub fn function(&self) -> &Gc<'gc, Function<'gc>> {
+        &self.function
+    }
+
+    pub fn upvalue(&self, index: usize) -> Option<&Gc<'gc, Upvalue<'gc>>> {
+        self.upvalues.get(index)
+    }
 }
 
 #[derive(Collect)]

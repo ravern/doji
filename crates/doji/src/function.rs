@@ -1,6 +1,6 @@
 use gc_arena::{Collect, Gc};
 
-#[derive(Collect)]
+#[derive(Clone, Collect)]
 #[collect(no_drop)]
 pub enum Constant<'gc> {
     Int(i64),
@@ -19,13 +19,13 @@ pub struct Function<'gc> {
     pub upvalues: Box<[Upvalue]>,
 }
 
-#[derive(Collect)]
+#[derive(Clone, Collect, Copy)]
 #[collect(no_drop)]
 pub struct Instruction(u32);
 
 impl Instruction {
     pub fn new(opcode: u8, operand: u32) -> Instruction {
-        assert!(operand < 1 << 24, "Operand is too large");
+        assert!(operand < 1 << 24, "operand is too large");
 
         Instruction(operand << 8 | opcode as u32)
     }
@@ -40,29 +40,53 @@ impl Instruction {
 }
 
 pub mod opcode {
-    pub const CONSTANT: u8 = 0;
+    pub const NO_OP: u8 = 0x0;
 
-    pub const ADD: u8 = 0;
-    pub const SUB: u8 = 1;
-    pub const MUL: u8 = 2;
-    pub const DIV: u8 = 3;
-    pub const MOD: u8 = 4;
-    pub const NEG: u8 = 5;
-    pub const EQ: u8 = 6;
-    pub const NOT_EQ: u8 = 7;
-    pub const LT: u8 = 8;
-    pub const LT_EQ: u8 = 9;
-    pub const GT: u8 = 10;
-    pub const GT_EQ: u8 = 11;
-    pub const AND: u8 = 12;
-    pub const OR: u8 = 13;
-    pub const NOT: u8 = 14;
+    pub const NIL: u8 = 0x10;
+    pub const TRUE: u8 = 0x11;
+    pub const FALSE: u8 = 0x12;
+    pub const INT: u8 = 0x13;
+    pub const CONSTANT: u8 = 0x14;
+    pub const CLOSURE: u8 = 0x15;
+    pub const LIST: u8 = 0x16;
+    pub const MAP: u8 = 0x17;
+    pub const NATIVE: u8 = 0x18;
 
-    pub const TEST: u8 = 14;
-    pub const JUMP: u8 = 15;
+    pub const LOAD: u8 = 0x20;
+    pub const STORE: u8 = 0x21;
+    pub const POP: u8 = 0x22;
 
-    pub const CALL: u8 = 17;
-    pub const RETURN: u8 = 18;
+    pub const ADD: u8 = 0x30;
+    pub const SUB: u8 = 0x31;
+    pub const MUL: u8 = 0x32;
+    pub const DIV: u8 = 0x33;
+    pub const MOD: u8 = 0x34;
+    pub const NEG: u8 = 0x35;
+    pub const EQ: u8 = 0x36;
+    pub const NOT_EQ: u8 = 0x37;
+    pub const LT: u8 = 0x38;
+    pub const LT_EQ: u8 = 0x39;
+    pub const GT: u8 = 0x3a;
+    pub const GT_EQ: u8 = 0x3b;
+    pub const AND: u8 = 0x3c;
+    pub const OR: u8 = 0x3d;
+    pub const NOT: u8 = 0x3e;
+    pub const BIT_AND: u8 = 0x3f;
+    pub const BIT_OR: u8 = 0x40;
+    pub const BIT_XOR: u8 = 0x41;
+    pub const BIT_NOT: u8 = 0x42;
+    pub const BIT_SHL: u8 = 0x43;
+    pub const BIT_SHR: u8 = 0x44;
+
+    pub const TEST: u8 = 0x50;
+    pub const JUMP: u8 = 0x51;
+
+    pub const CALL: u8 = 0x60;
+    pub const RETURN: u8 = 0x61;
+
+    pub const UPVALUE_LOAD: u8 = 0x70;
+    pub const UPVALUE_STORE: u8 = 0x71;
+    pub const UPVALUE_CLOSE: u8 = 0x72;
 }
 
 #[derive(Collect)]
@@ -89,6 +113,16 @@ impl<'gc> Builder<'gc> {
         }
     }
 
+    pub fn name(&mut self, name: &Gc<'gc, String>) -> &mut Self {
+        self.name = Some(name.clone());
+        self
+    }
+
+    pub fn arity(&mut self, arity: usize) -> &mut Self {
+        self.arity = Some(arity);
+        self
+    }
+
     pub fn constant(&mut self, constant: Constant<'gc>) -> usize {
         self.constants.push(constant);
         self.constants.len() - 1
@@ -100,11 +134,9 @@ impl<'gc> Builder<'gc> {
     }
 
     pub fn build(self) -> Function<'gc> {
-        assert!(self.arity.is_some(), "Arity is not set");
-
         Function {
             name: self.name,
-            arity: self.arity.unwrap(),
+            arity: self.arity.expect("arity is not set"),
             constants: self.constants.into_boxed_slice(),
             code: self.code.into_boxed_slice(),
             upvalues: Box::new([]),
