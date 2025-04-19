@@ -40,14 +40,11 @@ impl<'gc> Fiber<'gc> {
                     self.stack.push(Value::Int(instruction.operand() as i64));
                 }
 
-                opcode::ADD => {
-                    let b = self.stack.pop().unwrap();
-                    let a = self.stack.pop().unwrap();
-                    match (a, b) {
-                        (Value::Int(a), Value::Int(b)) => self.stack.push(Value::Int(a + b)),
-                        _ => unimplemented!(),
-                    }
-                }
+                opcode::ADD => self.do_int_or_float_op(|a, b| a + b, |a, b| a + b)?,
+                opcode::SUB => self.do_int_or_float_op(|a, b| a - b, |a, b| a - b)?,
+                opcode::MUL => self.do_int_or_float_op(|a, b| a * b, |a, b| a * b)?,
+                opcode::DIV => self.do_int_or_float_op(|a, b| a / b, |a, b| a / b)?,
+                opcode::MOD => self.do_int_op(|a, b| a % b)?,
 
                 opcode::RETURN => {
                     return Ok(Step::Done(self.stack.pop().unwrap()));
@@ -56,6 +53,56 @@ impl<'gc> Fiber<'gc> {
                 _ => unimplemented!(),
             }
         }
+    }
+
+    fn do_int_op<F, T>(&mut self, f: F) -> Result<(), Error>
+    where
+        F: Fn(i64, i64) -> T,
+        T: Into<Value<'gc>>,
+    {
+        let b: i64 = self.pop().try_into()?;
+        let a: i64 = self.pop().try_into()?;
+        self.stack.push(f(a, b).into());
+        Ok(())
+    }
+
+    fn do_int_or_float_op<F, G, T, U>(&mut self, f: F, g: G) -> Result<(), Error>
+    where
+        F: Fn(i64, i64) -> T,
+        G: Fn(f64, f64) -> U,
+        T: Into<Value<'gc>>,
+        U: Into<Value<'gc>>,
+    {
+        enum IntOrFloat {
+            Int(i64),
+            Float(f64),
+        }
+
+        impl<'gc> TryFrom<Value<'gc>> for IntOrFloat {
+            type Error = Error;
+
+            fn try_from(value: Value<'gc>) -> Result<Self, Self::Error> {
+                let i_result = value.clone().try_into().map(IntOrFloat::Int);
+                let f_result = value.try_into().map(IntOrFloat::Float);
+                i_result.or(f_result)
+            }
+        }
+
+        use IntOrFloat::*;
+
+        let b: IntOrFloat = self.pop().try_into()?;
+        let a: IntOrFloat = self.pop().try_into()?;
+        self.stack.push(match (a, b) {
+            (Int(a), Int(b)) => f(a, b).into(),
+            (Float(a), Float(b)) => g(a, b).into(),
+            (Int(a), Float(b)) => g(a as f64, b).into(),
+            (Float(a), Int(b)) => g(a, b as f64).into(),
+        });
+        Ok(())
+    }
+
+    fn pop(&mut self) -> Value<'gc> {
+        self.stack.pop().expect("stack underflow")
     }
 }
 

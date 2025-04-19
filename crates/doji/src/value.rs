@@ -1,6 +1,6 @@
-use gc_arena::{Collect, Gc};
+use gc_arena::{Collect, Gc, lock::RefLock};
 
-use crate::{error::Error, function::Function};
+use crate::{error::Error, fiber::Fiber, function::Function};
 
 #[derive(Clone, Collect)]
 #[collect(no_drop)]
@@ -11,6 +11,7 @@ pub enum Value<'gc> {
     Float(f64),
     String(Gc<'gc, String>),
     Closure(Gc<'gc, Closure<'gc>>),
+    Fiber(Gc<'gc, RefLock<Fiber<'gc>>>),
 }
 
 impl<'gc> TryFrom<Value<'gc>> for bool {
@@ -54,6 +55,18 @@ impl<'gc> TryFrom<Value<'gc>> for String {
             Value::String(s) => Ok(s.as_ref().clone()),
             _ => Err(Error::WrongType),
         }
+    }
+}
+
+impl<'gc> From<i64> for Value<'gc> {
+    fn from(value: i64) -> Self {
+        Value::Int(value)
+    }
+}
+
+impl<'gc> From<f64> for Value<'gc> {
+    fn from(value: f64) -> Self {
+        Value::Float(value)
     }
 }
 
