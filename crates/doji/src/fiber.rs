@@ -73,25 +73,25 @@ impl<'gc> Fiber<'gc> {
         T: Into<Value<'gc>>,
         U: Into<Value<'gc>>,
     {
-        enum IntOrFloat {
+        enum Number {
             Int(i64),
             Float(f64),
         }
 
-        impl<'gc> TryFrom<Value<'gc>> for IntOrFloat {
+        impl<'gc> TryFrom<Value<'gc>> for Number {
             type Error = Error;
 
             fn try_from(value: Value<'gc>) -> Result<Self, Self::Error> {
-                let i_result = value.clone().try_into().map(IntOrFloat::Int);
-                let f_result = value.try_into().map(IntOrFloat::Float);
+                let i_result = value.clone().try_into().map(Number::Int);
+                let f_result = value.try_into().map(Number::Float);
                 i_result.or(f_result)
             }
         }
 
-        use IntOrFloat::*;
+        use Number::*;
 
-        let b: IntOrFloat = self.pop().try_into()?;
-        let a: IntOrFloat = self.pop().try_into()?;
+        let b: Number = self.pop().try_into()?;
+        let a: Number = self.pop().try_into()?;
         self.stack.push(match (a, b) {
             (Int(a), Int(b)) => f(a, b).into(),
             (Float(a), Float(b)) => g(a, b).into(),
