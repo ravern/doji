@@ -5,3 +5,4 @@ edition = "2024"
 
 [dependencies]
 gc-arena = "0.5.3"
+generational-arena = "0.2.9"

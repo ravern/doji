@@ -19,6 +19,12 @@ pub struct Function<'gc> {
     pub upvalues: Box<[Upvalue]>,
 }
 
+impl<'gc> Function<'gc> {
+    pub fn builder() -> Builder<'gc> {
+        Builder::new()
+    }
+}
+
 #[derive(Clone, Collect, Copy)]
 #[collect(no_drop)]
 pub struct Instruction(u32);
@@ -34,8 +40,8 @@ impl Instruction {
         (self.0 & 0xFF) as u8
     }
 
-    pub fn operand(&self) -> u32 {
-        self.0 >> 8
+    pub fn operand(&self) -> usize {
+        (self.0 >> 8) as usize
     }
 }
 
