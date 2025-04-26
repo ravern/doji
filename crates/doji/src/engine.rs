@@ -1,13 +1,10 @@
-use std::collections::VecDeque;
-
-use gc_arena::{Arena as GcArena, Collect, Collection, Gc, Mutation, Rootable, lock::GcRefLock};
-use generational_arena::Arena as GenArena;
+use gc_arena::{Arena as GcArena, Gc, Mutation, Rootable};
 
 use crate::{
     error::Error,
-    fiber::{self, Fiber},
     function::{Function, opcode},
     native::Native,
+    state::{self, State},
     value::Value,
 };
 
@@ -45,73 +42,15 @@ impl Engine {
         T: for<'gc> TryFrom<Value<'gc>, Error = Error>,
     {
         loop {
-            match self.arena.mutate_root(|mc, state| state.step(mc))? {
-                Step::Continue => {}
-                Step::Done(value) => return Ok(value),
+            if let Some(step) = self.arena.mutate_root(|mc, state| state.step(mc))? {
+                match step {
+                    state::Step::Yield(id, op) => {}
+                    state::Step::Return(value) => return Ok(value),
+                }
+            } else {
+                std::thread::park();
             }
             self.arena.collect_debt();
-        }
-    }
-}
-
-pub struct State<'gc> {
-    root_fiber: Option<GcRefLock<'gc, Fiber<'gc>>>,
-    ready_queue: VecDeque<GcRefLock<'gc, Fiber<'gc>>>,
-    pending_arena: GenArena<GcRefLock<'gc, Fiber<'gc>>>,
-}
-
-impl<'gc> State<'gc> {
-    fn new(mc: &Mutation<'gc>) -> Self {
-        Self {
-            root_fiber: None,
-            ready_queue: VecDeque::new(),
-            pending_arena: GenArena::new(),
-        }
-    }
-
-    fn step<T>(&mut self, mc: &Mutation<'gc>) -> Result<Step<T>, Error>
-    where
-        T: TryFrom<Value<'gc>, Error = Error>,
-    {
-        let root_fiber = self.root_fiber.expect("root fiber not yet spawned");
-
-        let fiber = match self.ready_queue.pop_front() {
-            Some(fiber) => fiber,
-            None => return Ok(Step::Continue),
-        };
-
-        let index = self.pending_arena.insert(fiber);
-
-        match fiber.borrow_mut(mc).step(mc)? {
-            fiber::Step::Yield(operation) => {
-                self.pending_arena.insert(fiber);
-            }
-            fiber::Step::Return(value) => {
-                return value.try_into().map(Step::Done);
-            }
-        }
-
-        Ok(Step::Continue)
-    }
-}
-
-enum Step<T> {
-    Continue,
-    Done(T),
-}
-
-unsafe impl<'gc> Collect for State<'gc> {
-    #[inline]
-    fn needs_trace() -> bool {
-        true
-    }
-
-    #[inline]
-    fn trace(&self, cc: &Collection) {
-        self.root_fiber.trace(cc);
-        self.ready_queue.trace(cc);
-        for (_, fiber) in self.pending_arena.iter() {
-            fiber.trace(cc);
         }
     }
 }

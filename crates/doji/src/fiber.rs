@@ -1,4 +1,4 @@
-use gc_arena::{Collect, Gc, Mutation, lock::GcRefLock};
+use gc_arena::{Collect, Mutation, lock::GcRefLock};
 
 use crate::{
     error::Error,
@@ -66,8 +66,8 @@ impl<'gc> Fiber<'gc> {
                             return Ok(Step::Yield(operation));
                         }
                         native::Step::Call(arity) => self.call(mc, arity)?,
-                        native::Step::Return(value) => {
-                            return Ok(Step::Return(value));
+                        native::Step::Return => {
+                            return Ok(Step::Return(self.pop()));
                         }
                     }
                 }

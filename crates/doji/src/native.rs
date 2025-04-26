@@ -1,8 +1,8 @@
 use gc_arena::{Collect, Mutation};
 
-use crate::{io, value::Value};
+use crate::io;
 
-/// A function implemented natively in Rust.
+/// A Dōji function implemented natively in Rust.
 ///
 /// Native functions consist of steps which will be executed in order. Each step should run
 /// some Rust code, and either yield to an I/O operation, call another function (native or
@@ -20,12 +20,12 @@ impl Native {
     }
 }
 
-pub type StepFn = for<'gc> fn(&Mutation<'gc>) -> Step<'gc>;
+pub type StepFn = for<'gc> fn(&Mutation<'gc>) -> Step;
 
-pub enum Step<'gc> {
+pub enum Step {
     Yield(io::Operation),
     Call(usize),
-    Return(Value<'gc>),
+    Return,
 }
 
 pub struct Builder {
