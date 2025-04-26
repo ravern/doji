@@ -1,12 +1,13 @@
+use alloc::boxed::Box;
 use gc_arena::{Collect, Gc};
 
 use crate::string::StringPtr;
 
-pub(crate) type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
+pub type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub(crate) struct Function<'gc> {
+pub struct Function<'gc> {
     name: Option<StringPtr<'gc>>,
     arity: usize,
     constants: Box<[Constant<'gc>]>,
@@ -15,7 +16,7 @@ pub(crate) struct Function<'gc> {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub(crate) enum Constant<'gc> {
+pub enum Constant<'gc> {
     Int(i64),
     Float(f64),
     String(StringPtr<'gc>),
@@ -23,4 +24,4 @@ pub(crate) enum Constant<'gc> {
 
 #[derive(Collect)]
 #[collect(no_drop)]
-pub(crate) enum Instruction {}
+pub enum Instruction {}

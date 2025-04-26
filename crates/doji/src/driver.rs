@@ -1,39 +1,42 @@
-use std::error::Error as StdError;
-
-use crate::value::Value;
+use crate::{context::Context, value::IntoValue};
 
 pub trait Driver {
-    type Error;
+    type Data: for<'gc> IntoValue<'gc>;
+    type Error: core::error::Error + Send;
 
-    fn start(&self);
-    fn execute(&self, op: Operation);
-    fn poll(&self) -> Option<Result<Response, Self::Error>>;
+    fn dispatch<'gc>(&self, cx: &Context<'gc>, op: Operation);
+    fn poll<'gc>(&self, cx: &Context<'gc>) -> Option<Response<Self::Data, Self::Error>>;
 }
 
 pub struct Operation {
-    fiber: usize,
+    id: OperationId,
     data: OperationData,
 }
+
+impl Operation {
+    pub fn id(&self) -> OperationId {
+        self.id
+    }
+
+    pub fn data(&self) -> &OperationData {
+        &self.data
+    }
+}
+
+#[derive(Copy, Clone)]
+pub struct OperationId(usize);
 
 pub enum OperationData {
     Sleep(usize),
 }
 
-pub struct Response<'gc> {
-    fiber: usize,
-    value: Value<'gc>,
+pub struct Response<D, E> {
+    id: OperationId,
+    result: Result<D, E>,
 }
 
-pub struct DefaultDriver;
-
-impl Driver for DefaultDriver {
-    type Error = Box<dyn StdError>;
-
-    fn start(&self) {}
-
-    fn execute(&self, _op: Operation) {}
-
-    fn poll(&self) -> Option<Result<Response, Self::Error>> {
-        None
+impl<D, E> Response<D, E> {
+    pub fn new(id: OperationId, result: Result<D, E>) -> Self {
+        Self { id, result }
     }
 }

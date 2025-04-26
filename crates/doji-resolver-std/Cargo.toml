@@ -1,8 +1,7 @@
 [package]
-name = "doji"
+name = "doji-resolver-std"
 version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-bon = "3.6.3"
-gc-arena = "0.5.3"
+doji = { path = "../doji" }

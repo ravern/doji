@@ -5,3 +5,5 @@ edition = "2024"
 
 [dependencies]
 doji = { path = "../doji" }
+doji-driver-std = { path = "../doji-driver-std" }
+doji-resolver-std = { path = "../doji-resolver-std" }
