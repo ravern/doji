@@ -1,61 +1,49 @@
-use gc_arena::{Arena as GcArena, Gc, Mutation, Rootable};
+use crate::{Error, driver::DefaultDriver, resolver::DefaultResolver};
 
-use crate::{
-    error::Error,
-    function::{Function, opcode},
-    native::Native,
-    state::{self, State},
-    value::Value,
-};
-
-fn build_function<'gc>(mc: &Mutation<'gc>) -> Gc<'gc, Function<'gc>> {
-    let mut builder = Function::builder();
-    builder.arity(0);
-    builder.instruction(opcode::INT, 3);
-    builder.instruction(opcode::INT, 4);
-    builder.instruction(opcode::ADD, 0);
-    builder.instruction(opcode::RETURN, 0);
-    Gc::new(mc, builder.build())
+pub struct Engine<R, D> {
+    resolver: R,
+    driver: D,
 }
 
-pub struct Engine {
-    arena: GcArena<Rootable![State<'_>]>,
+impl<R, I> Engine<R, I> {
+    pub fn builder() -> Builder<R, I> {
+        Builder::default()
+    }
+
+    pub fn evaluate_inline<T>(&mut self, source: &str) -> Result<T, Error> {
+        todo!()
+    }
 }
 
-impl Engine {
-    pub fn new() -> Self {
+pub struct Builder<R, D> {
+    resolver: R,
+    driver: D,
+}
+
+impl<R, D> Builder<R, D> {
+    pub fn resolver(mut self, resolver: R) -> Self {
+        self.resolver = resolver;
+        self
+    }
+
+    pub fn driver(mut self, driver: D) -> Self {
+        self.driver = driver;
+        self
+    }
+
+    pub fn build(self) -> Engine<R, D> {
+        Engine {
+            resolver: self.resolver,
+            driver: self.driver,
+        }
+    }
+}
+
+impl<R, I> Default for Builder<R, I> {
+    fn default() -> Self {
         Self {
-            arena: GcArena::new(|mc| State::new(mc)),
+            resolver: unimplemented!(),
+            driver: unimplemented!(),
         }
     }
-
-    pub fn register(&mut self, name: &str, native: Native) -> Result<(), Error> {
-        unimplemented!()
-    }
-
-    pub fn resolve(&mut self, name: &str, source: Source<'_>) -> Result<(), Error> {
-        unimplemented!()
-    }
-
-    pub fn evaluate<T>(&mut self, source: Source<'_>) -> Result<T, Error>
-    where
-        T: for<'gc> TryFrom<Value<'gc>, Error = Error>,
-    {
-        loop {
-            if let Some(step) = self.arena.mutate_root(|mc, state| state.step(mc))? {
-                match step {
-                    state::Step::Yield(id, op) => {}
-                    state::Step::Return(value) => return Ok(value),
-                }
-            } else {
-                std::thread::park();
-            }
-            self.arena.collect_debt();
-        }
-    }
-}
-
-pub enum Source<'s> {
-    File(&'s str),
-    Inline(&'s str),
 }
