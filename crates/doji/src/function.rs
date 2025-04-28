@@ -23,4 +23,4 @@ pub enum Constant<'gc> {
 
 #[derive(Collect, Debug)]
 #[collect(no_drop)]
-pub enum Instruction {}
+pub struct Instruction(u32);

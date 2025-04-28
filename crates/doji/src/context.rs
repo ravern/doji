@@ -15,7 +15,7 @@ impl<'gc> Context<'gc> {
         Self { mutation, state }
     }
 
-    pub fn compile(&self, source: impl AsRef<str>) -> Result<ClosurePtr<'gc>, ErrorPtr<'gc>> {
+    pub fn compile(&self, source: &str) -> Result<ClosurePtr<'gc>, ErrorPtr<'gc>> {
         let function = compile(self, source.as_ref())?;
         let closure = ClosureValue::new_ptr(self, function);
         Ok(closure)

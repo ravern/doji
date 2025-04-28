@@ -1,3 +1,5 @@
+use generational_arena::Index;
+
 use crate::{context::Context, value::Value};
 
 #[derive(Default)]
@@ -14,4 +16,16 @@ impl Driver {
 }
 
 #[derive(Clone, Copy)]
-pub struct Id(usize);
+pub struct Id(Index);
+
+impl From<Index> for Id {
+    fn from(index: Index) -> Self {
+        Self(index)
+    }
+}
+
+impl From<Id> for Index {
+    fn from(id: Id) -> Self {
+        id.0
+    }
+}

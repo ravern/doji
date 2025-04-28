@@ -7,17 +7,4 @@ fn main() {
         Ok(answer) => println!("3 + 4 = {}", answer),
         Err(error) => eprintln!("error: {}", error),
     }
-
-    match engine.evaluate_file::<i64>("test.doji") {
-        Ok(answer) => {
-            // match engine.unroot::<i64>(answer) {
-            //     Ok(answer) => println!("test.doji = {}", answer),
-            //     Err(error) => {
-            //         eprintln!("error: {}", error);
-            //         return;
-            //     }
-            // };
-        }
-        Err(error) => eprintln!("error: {}", error),
-    }
 }
