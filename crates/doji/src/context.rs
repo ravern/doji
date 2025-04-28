@@ -1,8 +1,8 @@
 use gc_arena::Mutation;
 
 use crate::{
+    ClosurePtr, closure::ClosureValue, compile::compile, error::ErrorPtr, fiber::FiberPtr,
     state::State,
-    value::{RootValue, Value},
 };
 
 pub struct Context<'gc> {
@@ -15,11 +15,21 @@ impl<'gc> Context<'gc> {
         Self { mutation, state }
     }
 
-    pub fn root(&self, value: Value<'gc>) -> RootValue {
-        self.state.root(self.mutation, value)
+    pub fn compile(&self, source: impl AsRef<str>) -> Result<ClosurePtr<'gc>, ErrorPtr<'gc>> {
+        let function = compile(self, source.as_ref())?;
+        let closure = ClosureValue::new_ptr(self, function);
+        Ok(closure)
     }
 
-    pub fn unroot(&self, root: RootValue) -> Value<'gc> {
-        self.state.unroot(root)
+    pub fn spawn(&self, closure: ClosurePtr<'gc>) -> FiberPtr<'gc> {
+        self.state.spawn(self, closure)
+    }
+
+    pub(crate) fn mutation(&self) -> &Mutation<'gc> {
+        self.mutation
+    }
+
+    pub(crate) fn state(&self) -> &State<'gc> {
+        self.state
     }
 }

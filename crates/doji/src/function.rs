@@ -4,7 +4,7 @@ use crate::string::StringPtr;
 
 pub type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
 
-#[derive(Collect)]
+#[derive(Collect, Debug)]
 #[collect(no_drop)]
 pub struct Function<'gc> {
     name: Option<StringPtr<'gc>>,
@@ -13,7 +13,7 @@ pub struct Function<'gc> {
     code: Box<[Instruction]>,
 }
 
-#[derive(Collect)]
+#[derive(Collect, Debug)]
 #[collect(no_drop)]
 pub enum Constant<'gc> {
     Int(i64),
@@ -21,6 +21,6 @@ pub enum Constant<'gc> {
     String(StringPtr<'gc>),
 }
 
-#[derive(Collect)]
+#[derive(Collect, Debug)]
 #[collect(no_drop)]
 pub enum Instruction {}

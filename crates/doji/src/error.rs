@@ -1,55 +1,54 @@
-extern crate alloc;
-use alloc::boxed::Box;
 use std::fmt::{self, Display, Formatter};
 
-use crate::value::ValueType;
+use gc_arena::{Collect, Gc};
 
-#[derive(Debug)]
-pub enum Error {
-    Engine(EngineError),
-    InvalidImport,
-    WrongType(WrongTypeError),
+use crate::{context::Context, string::StringPtr, value::Value};
+
+pub type ErrorPtr<'gc> = Gc<'gc, ErrorValue<'gc>>;
+
+#[derive(Collect, Debug)]
+#[collect(no_drop)]
+pub struct ErrorValue<'gc> {
+    message: StringPtr<'gc>,
+    data: Value<'gc>,
+    trace: (),
+}
+
+impl<'gc> ErrorValue<'gc> {
+    pub fn new_ptr(cx: &Context<'gc>, message: StringPtr<'gc>, data: Value<'gc>) -> ErrorPtr<'gc> {
+        Gc::new(
+            cx.mutation(),
+            Self {
+                message,
+                data,
+                trace: (),
+            },
+        )
+    }
+}
+
+impl<'gc> Display for ErrorValue<'gc> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.message)
+    }
+}
+
+pub struct Error {
+    message: String,
+    trace: (),
 }
 
 impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Engine(err) => write!(f, "{}", err),
-            Self::InvalidImport => write!(f, "invalid import"),
-            Self::WrongType(err) => write!(f, "{}", err),
+        write!(f, "{}", self.message)
+    }
+}
+
+impl<'gc> From<ErrorPtr<'gc>> for Error {
+    fn from(error: ErrorPtr<'gc>) -> Self {
+        Self {
+            message: error.message.to_string(),
+            trace: error.trace,
         }
-    }
-}
-
-impl From<EngineError> for Error {
-    fn from(e: EngineError) -> Self {
-        Self::Engine(e)
-    }
-}
-
-impl From<WrongTypeError> for Error {
-    fn from(e: WrongTypeError) -> Self {
-        Self::WrongType(e)
-    }
-}
-
-#[derive(Debug)]
-pub enum EngineError {}
-
-impl Display for EngineError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        Ok(())
-    }
-}
-
-#[derive(Debug)]
-pub struct WrongTypeError {
-    pub expected: ValueType,
-    pub actual: ValueType,
-}
-
-impl Display for WrongTypeError {
-    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        write!(f, "tried to convert {} to {}", self.actual, self.expected)
     }
 }

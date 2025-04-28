@@ -1,57 +1,17 @@
-extern crate alloc;
-use alloc::boxed::Box;
-use std::error::Error;
+use crate::{context::Context, value::Value};
 
-use crate::{context::Context, value::IntoValue};
-
-pub struct Driver;
+#[derive(Default)]
+pub struct Driver {}
 
 impl Driver {
-    pub fn new() -> Self {
-        Self
-    }
-
-    pub fn dispatch<'a>(&self, cx: &Context<'a>, op: Operation) {
+    pub fn dispatch<'gc>(&self, cx: &Context<'gc>, id: Id, op: Value<'gc>) {
         todo!()
     }
 
-    pub fn poll<'gc, T>(&self, cx: &Context<'gc>) -> Option<Response<T, Box<dyn Error + Send>>>
-    where
-        T: IntoValue<'gc>,
-    {
+    pub fn poll<'gc>(&self, cx: &Context<'gc>) -> Option<(Id, Value<'gc>)> {
         todo!()
     }
 }
 
-pub struct Operation {
-    id: OperationId,
-    data: OperationData,
-}
-
-impl Operation {
-    pub fn id(&self) -> OperationId {
-        self.id
-    }
-
-    pub fn data(&self) -> &OperationData {
-        &self.data
-    }
-}
-
-#[derive(Copy, Clone)]
-pub struct OperationId(usize);
-
-pub enum OperationData {
-    Sleep(usize),
-}
-
-pub struct Response<D, E> {
-    id: OperationId,
-    result: Result<D, E>,
-}
-
-impl<D, E> Response<D, E> {
-    pub fn new(id: OperationId, result: Result<D, E>) -> Self {
-        Self { id, result }
-    }
-}
+#[derive(Clone, Copy)]
+pub struct Id(usize);

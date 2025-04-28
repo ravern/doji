@@ -1,10 +1,13 @@
 use std::fmt::{self, Display, Formatter};
 
-use gc_arena::{Collect, DynamicRoot, Rootable};
+use gc_arena::{Collect, DynamicRoot, Gc, Rootable};
 
-use crate::{context::Context, error::WrongTypeError, string::StringPtr};
-
-pub type RootValue = DynamicRoot<Rootable![Value<'_>]>;
+use crate::{
+    closure::ClosurePtr,
+    context::Context,
+    error::{ErrorPtr, ErrorValue},
+    string::{StringPtr, StringValue},
+};
 
 #[derive(Debug)]
 pub enum ValueType {
@@ -13,6 +16,8 @@ pub enum ValueType {
     Int,
     Float,
     String,
+    Closure,
+    Error,
 }
 
 impl Display for ValueType {
@@ -23,15 +28,17 @@ impl Display for ValueType {
             Self::Int => write!(f, "int"),
             Self::Float => write!(f, "float"),
             Self::String => write!(f, "string"),
+            Self::Closure => write!(f, "closure"),
+            Self::Error => write!(f, "error"),
         }
     }
 }
 
-#[derive(Clone, Collect, Copy)]
+#[derive(Clone, Collect, Copy, Debug)]
 #[collect(no_drop)]
 pub struct Value<'gc>(ValueInner<'gc>);
 
-#[derive(Clone, Collect, Copy)]
+#[derive(Clone, Collect, Copy, Debug)]
 #[collect(no_drop)]
 enum ValueInner<'gc> {
     Nil,
@@ -39,6 +46,8 @@ enum ValueInner<'gc> {
     Int(i64),
     Float(f64),
     String(StringPtr<'gc>),
+    Closure(ClosurePtr<'gc>),
+    Error(ErrorPtr<'gc>),
 }
 
 impl<'gc> Value<'gc> {
@@ -53,7 +62,16 @@ impl<'gc> Value<'gc> {
             ValueInner::Int(_) => ValueType::Int,
             ValueInner::Float(_) => ValueType::Float,
             ValueInner::String(_) => ValueType::String,
+            ValueInner::Closure(_) => ValueType::Closure,
+            ValueInner::Error(_) => ValueType::Error,
         }
+    }
+
+    pub fn try_into<T>(self, cx: &Context<'gc>) -> Result<T, ErrorPtr<'gc>>
+    where
+        T: TryFromValue<'gc>,
+    {
+        T::try_from_value(self, cx)
     }
 }
 
@@ -63,53 +81,50 @@ impl<'gc> Default for Value<'gc> {
     }
 }
 
-pub trait TryFromValue<'gc>: Sized {
-    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, WrongTypeError>;
+macro_rules! impl_from_for_value {
+    ($ty:ty, $variant:ident) => {
+        impl<'gc> From<$ty> for Value<'gc> {
+            fn from(value: $ty) -> Self {
+                Value(ValueInner::$variant(value))
+            }
+        }
+    };
 }
 
-macro_rules! impl_try_from {
+impl_from_for_value!(bool, Bool);
+impl_from_for_value!(i64, Int);
+impl_from_for_value!(f64, Float);
+impl_from_for_value!(StringPtr<'gc>, String);
+impl_from_for_value!(ClosurePtr<'gc>, Closure);
+impl_from_for_value!(ErrorPtr<'gc>, Error);
+
+pub trait TryFromValue<'gc>: Sized {
+    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, ErrorPtr<'gc>>;
+}
+
+macro_rules! impl_try_from_value {
     ($ty:ty, $variant:ident, $expected:expr) => {
         impl<'gc> TryFromValue<'gc> for $ty {
-            fn try_from_value(
-                value: Value<'gc>,
-                _cx: &Context<'gc>,
-            ) -> Result<Self, WrongTypeError> {
+            fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, ErrorPtr<'gc>> {
                 match value.0 {
                     ValueInner::$variant(v) => Ok(v),
-                    _ => Err(WrongTypeError {
-                        expected: $expected,
-                        actual: value.ty(),
-                    }),
+                    _ => Err(ErrorValue::new_ptr(
+                        cx,
+                        StringValue::new_ptr(
+                            cx,
+                            format!("tried to convert {} to {}", value.ty(), $expected),
+                        ),
+                        value,
+                    )),
                 }
             }
         }
     };
 }
 
-impl_try_from!(bool, Bool, ValueType::Bool);
-impl_try_from!(i64, Int, ValueType::Int);
-impl_try_from!(f64, Float, ValueType::Float);
-
-impl<'gc> TryFromValue<'gc> for RootValue {
-    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, WrongTypeError> {
-        Ok(cx.root(value))
-    }
-}
-
-pub trait ValueTryInto<'gc, T>: Sized {
-    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, WrongTypeError>
-    where
-        T: TryFromValue<'gc>;
-}
-
-impl<'gc, T> ValueTryInto<'gc, T> for Value<'gc>
-where
-    T: TryFromValue<'gc>,
-{
-    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, WrongTypeError> {
-        T::try_from_value(self, cx)
-    }
-}
+impl_try_from_value!(bool, Bool, ValueType::Bool);
+impl_try_from_value!(i64, Int, ValueType::Int);
+impl_try_from_value!(f64, Float, ValueType::Float);
 
 pub trait IntoValue<'gc>: Sized {
     fn into_value(self, cx: &Context<'gc>) -> Value<'gc>;
@@ -121,5 +136,17 @@ where
 {
     fn into_value(self, _cx: &Context<'gc>) -> Value<'gc> {
         self.into()
+    }
+}
+
+impl<'gc> IntoValue<'gc> for &str {
+    fn into_value(self, cx: &Context<'gc>) -> Value<'gc> {
+        self.to_string().into_value(cx)
+    }
+}
+
+impl<'gc> IntoValue<'gc> for String {
+    fn into_value(self, cx: &Context<'gc>) -> Value<'gc> {
+        Value(ValueInner::String(StringValue::new_ptr(cx, self)))
     }
 }

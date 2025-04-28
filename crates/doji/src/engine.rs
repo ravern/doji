@@ -1,79 +1,70 @@
+use std::path::Path;
+
 use bon::Builder;
 use gc_arena::{Arena, Rootable};
 
 use crate::{
-    compile::compile,
     context::Context,
     driver::Driver,
     error::Error,
-    state::State,
-    value::{RootValue, TryFromValue, ValueTryInto},
+    state::{State, Step},
+    value::TryFromValue,
 };
 
 #[derive(Builder)]
 pub struct Engine {
     #[builder(skip = Arena::new(|mutation| State::new(mutation)))]
     arena: Arena<Rootable![State<'_>]>,
-    #[builder(skip = Driver::new())]
+    #[builder(skip)]
     driver: Driver,
 }
 
 impl Engine {
-    pub fn enter<F, T>(&mut self, f: F) -> T
-    where
-        F: for<'gc> FnOnce(&Context<'gc>) -> T,
-    {
+    pub fn enter<T>(&self, f: impl for<'gc> FnOnce(&Context<'gc>) -> T) -> T {
         self.arena
             .mutate(|mutation, state| f(&Context::new(mutation, state)))
     }
 
-    pub fn unroot<T>(&mut self, root: RootValue) -> Result<T, Error>
+    pub fn evaluate_inline<T>(&self, source: impl AsRef<str>) -> Result<T, Error>
     where
         T: for<'gc> TryFromValue<'gc>,
     {
-        self.enter(|cx| cx.unroot(root).value_try_into(cx).map_err(Error::WrongType))
-    }
+        // Compile and spawn the initial fiber.
+        self.enter::<Result<_, Error>>(|cx| {
+            let closure = cx.compile(source)?;
+            cx.spawn(closure);
+            Ok(())
+        })?;
 
-    pub fn evaluate_inline<T>(&mut self, source: impl AsRef<str>) -> Result<T, Error>
-    where
-        T: for<'gc> TryFromValue<'gc>,
-    {
         loop {
-            if let Some(value) = self.enter(|cx| {
-                let function = match compile(cx, source.as_ref()) {
-                    Ok(function) => function,
-                    Err(error) => {
-                        unimplemented!()
-                    }
-                };
+            // Run one step of the evaluation on the state, and return a non-None value if the
+            // evaluation is complete.
+            let ret_value = self.enter::<Result<_, Error>>(|cx| match cx.state().step(cx) {
+                Step::Continue => Ok(None),
+                Step::Yield(id, op) => {
+                    self.driver.dispatch(cx, id, op);
+                    Ok(None)
+                }
+                Step::Return(value) => Ok(Some(value.try_into(cx)?)),
+            })?;
 
-                // match cx.state().step(cx) {
-                //     Step::Continue => {}
-                //     Step::Yield(op) => {
-                //         self.driver.dispatch(cx, op);
-                //     }
-                //     Step::Return(value) => {
-                //         return Some(value.value_try_into(cx).map_err(Error::Type));
-                //     }
-                // };
-
-                None
-            }) {
-                return value;
+            // If the evaluation is complete, return the result.
+            if let Some(value) = ret_value {
+                return Ok(value);
             }
 
-            // self.enter(|cx| {
-            //     if let Some(res) = self.driver.poll(cx) {
-            //         let value = res.result?;
-            //         cx.state().wake(cx, res);
-            //     }
-            // })
-
-            unimplemented!()
+            // Poll the driver for any completed operations, and wake the fibers if we find any.
+            // Since waking a fiber doesn't allocate much memory, we are fine to poll to completion
+            // in a single arena mutation.
+            self.enter(|cx| {
+                while let Some((id, res)) = self.driver.poll(cx) {
+                    cx.state().wake(cx, id, res);
+                }
+            });
         }
     }
 
-    pub fn evaluate_file<T>(&mut self, path: impl AsRef<str>) -> Result<T, Error>
+    pub fn evaluate_file<T>(&self, path: impl AsRef<Path>) -> Result<T, Error>
     where
         T: for<'gc> TryFromValue<'gc>,
     {
