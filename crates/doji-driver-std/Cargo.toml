@@ -1,7 +1,0 @@
-[package]
-name = "doji-driver-std"
-version = "0.1.0"
-edition = "2024"
-
-[dependencies]
-doji = { path = "../doji" }

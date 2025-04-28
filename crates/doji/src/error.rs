@@ -1,80 +1,54 @@
-use core::fmt::{self, Display, Formatter};
+extern crate alloc;
+use alloc::boxed::Box;
+use std::fmt::{self, Display, Formatter};
 
-use crate::{driver::Driver, resolver::Resolver, value::ValueType};
+use crate::value::ValueType;
 
 #[derive(Debug)]
-pub enum Error<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
-    Engine(EngineError<R, D>),
-    Type(TypeError),
+pub enum Error {
+    Engine(EngineError),
+    InvalidImport,
+    WrongType(WrongTypeError),
 }
 
-impl<R, D> Display for Error<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
+impl Display for Error {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Engine(e) => write!(f, "{}", e),
-            Self::Type(e) => write!(f, "{}", e),
+            Self::Engine(err) => write!(f, "{}", err),
+            Self::InvalidImport => write!(f, "invalid import"),
+            Self::WrongType(err) => write!(f, "{}", err),
         }
     }
 }
 
-impl<R, D> From<EngineError<R, D>> for Error<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
-    fn from(e: EngineError<R, D>) -> Self {
+impl From<EngineError> for Error {
+    fn from(e: EngineError) -> Self {
         Self::Engine(e)
     }
 }
 
-impl<R, D> From<TypeError> for Error<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
-    fn from(e: TypeError) -> Self {
-        Self::Type(e)
+impl From<WrongTypeError> for Error {
+    fn from(e: WrongTypeError) -> Self {
+        Self::WrongType(e)
     }
 }
 
 #[derive(Debug)]
-pub enum EngineError<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
-    Driver(D::Error),
-    Resolver(R::Error),
-}
+pub enum EngineError {}
 
-impl<R, D> Display for EngineError<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
+impl Display for EngineError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::Driver(e) => write!(f, "{}", e),
-            Self::Resolver(e) => write!(f, "{}", e),
-        }
+        Ok(())
     }
 }
 
 #[derive(Debug)]
-pub struct TypeError {
+pub struct WrongTypeError {
     pub expected: ValueType,
     pub actual: ValueType,
 }
 
-impl Display for TypeError {
+impl Display for WrongTypeError {
     fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         write!(f, "tried to convert {} to {}", self.actual, self.expected)
     }

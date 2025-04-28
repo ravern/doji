@@ -1,11 +1,26 @@
+extern crate alloc;
+use alloc::boxed::Box;
+use std::error::Error;
+
 use crate::{context::Context, value::IntoValue};
 
-pub trait Driver {
-    type Data: for<'gc> IntoValue<'gc>;
-    type Error: core::error::Error + Send;
+pub struct Driver;
 
-    fn dispatch<'gc>(&self, cx: &Context<'gc>, op: Operation);
-    fn poll<'gc>(&self, cx: &Context<'gc>) -> Option<Response<Self::Data, Self::Error>>;
+impl Driver {
+    pub fn new() -> Self {
+        Self
+    }
+
+    pub fn dispatch<'a>(&self, cx: &Context<'a>, op: Operation) {
+        todo!()
+    }
+
+    pub fn poll<'gc, T>(&self, cx: &Context<'gc>) -> Option<Response<T, Box<dyn Error + Send>>>
+    where
+        T: IntoValue<'gc>,
+    {
+        todo!()
+    }
 }
 
 pub struct Operation {

@@ -6,28 +6,19 @@ use crate::{
     context::Context,
     driver::Driver,
     error::Error,
-    resolver::Resolver,
-    state::{State, Step},
+    state::State,
     value::{RootValue, TryFromValue, ValueTryInto},
 };
 
 #[derive(Builder)]
-pub struct Engine<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
-    resolver: R,
-    driver: D,
+pub struct Engine {
     #[builder(skip = Arena::new(|mutation| State::new(mutation)))]
     arena: Arena<Rootable![State<'_>]>,
+    #[builder(skip = Driver::new())]
+    driver: Driver,
 }
 
-impl<R, D> Engine<R, D>
-where
-    R: Resolver,
-    D: Driver,
-{
+impl Engine {
     pub fn enter<F, T>(&mut self, f: F) -> T
     where
         F: for<'gc> FnOnce(&Context<'gc>) -> T,
@@ -36,14 +27,14 @@ where
             .mutate(|mutation, state| f(&Context::new(mutation, state)))
     }
 
-    pub fn unroot<T>(&mut self, root: RootValue) -> Result<T, Error<R, D>>
+    pub fn unroot<T>(&mut self, root: RootValue) -> Result<T, Error>
     where
         T: for<'gc> TryFromValue<'gc>,
     {
-        self.enter(|cx| cx.unroot(root).value_try_into(cx).map_err(Error::Type))
+        self.enter(|cx| cx.unroot(root).value_try_into(cx).map_err(Error::WrongType))
     }
 
-    pub fn evaluate_inline<T>(&mut self, source: impl AsRef<str>) -> Result<T, Error<R, D>>
+    pub fn evaluate_inline<T>(&mut self, source: impl AsRef<str>) -> Result<T, Error>
     where
         T: for<'gc> TryFromValue<'gc>,
     {
@@ -82,7 +73,7 @@ where
         }
     }
 
-    pub fn evaluate_file<T>(&mut self, path: impl AsRef<str>) -> Result<T, Error<R, D>>
+    pub fn evaluate_file<T>(&mut self, path: impl AsRef<str>) -> Result<T, Error>
     where
         T: for<'gc> TryFromValue<'gc>,
     {

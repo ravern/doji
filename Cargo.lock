@@ -75,22 +75,6 @@ name = "doji-cli"
 version = "0.1.0"
 dependencies = [
  "doji",
- "doji-driver-std",
- "doji-resolver-std",
-]
-
-[[package]]
-name = "doji-driver-std"
-version = "0.1.0"
-dependencies = [
- "doji",
-]
-
-[[package]]
-name = "doji-resolver-std"
-version = "0.1.0"
-dependencies = [
- "doji",
 ]
 
 [[package]]

@@ -1,4 +1,4 @@
-use gc_arena::{Collect, Collection, DynamicRootSet, Mutation};
+use gc_arena::{Collect, DynamicRootSet, Mutation};
 
 use crate::{
     context::Context,

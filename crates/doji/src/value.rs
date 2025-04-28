@@ -1,8 +1,8 @@
-use core::fmt::{self, Display, Formatter};
+use std::fmt::{self, Display, Formatter};
 
 use gc_arena::{Collect, DynamicRoot, Rootable};
 
-use crate::{context::Context, error::TypeError, string::StringPtr};
+use crate::{context::Context, error::WrongTypeError, string::StringPtr};
 
 pub type RootValue = DynamicRoot<Rootable![Value<'_>]>;
 
@@ -63,19 +63,20 @@ impl<'gc> Default for Value<'gc> {
     }
 }
 
-impl<'gc> From<()> for Value<'gc> {
-    fn from(_: ()) -> Self {
-        Self::NIL
-    }
+pub trait TryFromValue<'gc>: Sized {
+    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, WrongTypeError>;
 }
 
 macro_rules! impl_try_from {
     ($ty:ty, $variant:ident, $expected:expr) => {
         impl<'gc> TryFromValue<'gc> for $ty {
-            fn try_from_value(value: Value<'gc>, _cx: &Context<'gc>) -> Result<Self, TypeError> {
+            fn try_from_value(
+                value: Value<'gc>,
+                _cx: &Context<'gc>,
+            ) -> Result<Self, WrongTypeError> {
                 match value.0 {
                     ValueInner::$variant(v) => Ok(v),
-                    _ => Err(TypeError {
+                    _ => Err(WrongTypeError {
                         expected: $expected,
                         actual: value.ty(),
                     }),
@@ -90,17 +91,13 @@ impl_try_from!(i64, Int, ValueType::Int);
 impl_try_from!(f64, Float, ValueType::Float);
 
 impl<'gc> TryFromValue<'gc> for RootValue {
-    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, TypeError> {
+    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, WrongTypeError> {
         Ok(cx.root(value))
     }
 }
 
-pub trait TryFromValue<'gc>: Sized {
-    fn try_from_value(value: Value<'gc>, cx: &Context<'gc>) -> Result<Self, TypeError>;
-}
-
 pub trait ValueTryInto<'gc, T>: Sized {
-    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, TypeError>
+    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, WrongTypeError>
     where
         T: TryFromValue<'gc>;
 }
@@ -109,7 +106,7 @@ impl<'gc, T> ValueTryInto<'gc, T> for Value<'gc>
 where
     T: TryFromValue<'gc>,
 {
-    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, TypeError> {
+    fn value_try_into(self, cx: &Context<'gc>) -> Result<T, WrongTypeError> {
         T::try_from_value(self, cx)
     }
 }
