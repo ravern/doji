@@ -60,7 +60,7 @@ impl<'gc> State<'gc> {
         let id = self.pending_arena.borrow_mut(cx.mutation()).insert(fiber);
 
         // Run one step of the evaluation of the fiber.
-        match fiber.step(cx) {
+        match fiber.borrow_mut(cx.mutation()).step(cx) {
             fiber::Step::Continue => {
                 self.pending_arena.borrow_mut(cx.mutation()).remove(id);
                 Step::Continue
