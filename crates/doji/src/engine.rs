@@ -1,6 +1,5 @@
 use std::path::Path;
 
-use bon::Builder;
 use gc_arena::{Arena as GcArena, Rootable};
 
 use crate::{
@@ -11,15 +10,16 @@ use crate::{
     value::TryFromValue,
 };
 
-#[derive(Builder)]
 pub struct Engine {
-    #[builder(skip = GcArena::new(|mutation| State::new(mutation)))]
     arena: GcArena<Rootable![State<'_>]>,
-    #[builder(skip)]
     driver: Driver,
 }
 
 impl Engine {
+    pub fn builder() -> EngineBuilder {
+        EngineBuilder::default()
+    }
+
     pub fn enter<T>(&self, f: impl for<'gc> FnOnce(&Context<'gc>) -> T) -> T {
         self.arena
             .mutate(|mutation, state| f(&Context::new(mutation, state)))
@@ -50,8 +50,8 @@ impl Engine {
             })?;
 
             // If the evaluation is complete, return the result.
-            if let Some(value) = ret_value {
-                return Ok(value);
+            if let Some(ret_value) = ret_value {
+                return Ok(ret_value);
             }
 
             // Poll the driver for any completed operations, and wake the fibers if we find any.
@@ -70,5 +70,17 @@ impl Engine {
         T: for<'gc> TryFromValue<'gc>,
     {
         unimplemented!()
+    }
+}
+
+#[derive(Default)]
+pub struct EngineBuilder {}
+
+impl EngineBuilder {
+    pub fn build(self) -> Engine {
+        Engine {
+            arena: GcArena::new(|mutation| State::new(mutation)),
+            driver: Driver::default(),
+        }
     }
 }

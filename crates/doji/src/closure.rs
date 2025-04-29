@@ -29,6 +29,10 @@ impl<'gc> ClosureValue<'gc> {
     ) -> ClosurePtr<'gc> {
         Gc::new(cx.mutation(), Self { function, upvalues })
     }
+
+    pub fn function(&self) -> FunctionPtr<'gc> {
+        self.function
+    }
 }
 
 pub type UpvaluePtr<'gc> = Gc<'gc, Upvalue<'gc>>;
