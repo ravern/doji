@@ -85,27 +85,16 @@ impl<'gc> FunctionBuilder<'gc> {
         self
     }
 
-    pub fn arity(mut self, arity: usize) -> Self {
+    pub fn arity(&mut self, arity: usize) {
         self.arity = Some(arity);
-        self
     }
 
-    pub fn constant(mut self, constant: Constant<'gc>) -> Self {
-        self.constants.push(constant);
-        self
-    }
-
-    pub fn instruction(mut self, op: u8, operand: u32) -> Self {
-        self.code.push(Instruction::new(op, operand));
-        self
-    }
-
-    pub fn mut_constant(&mut self, constant: Constant<'gc>) -> usize {
+    pub fn constant(&mut self, constant: Constant<'gc>) -> usize {
         self.constants.push(constant);
         self.constants.len() - 1
     }
 
-    pub fn mut_instruction(&mut self, op: u8, operand: u32) -> usize {
+    pub fn instruction(&mut self, op: u8, operand: u32) -> usize {
         self.code.push(Instruction::new(op, operand));
         self.code.len() - 1
     }

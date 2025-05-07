@@ -5,11 +5,11 @@ use crate::{
 };
 
 pub fn compile<'gc>(cx: &Context<'gc>, source: &str) -> Result<FunctionPtr<'gc>, ErrorPtr<'gc>> {
-    Ok(Function::builder()
-        .arity(0)
-        .instruction(opcode::INT, 3)
-        .instruction(opcode::INT, 4)
-        .instruction(opcode::ADD, 0)
-        .instruction(opcode::RETURN, 0)
-        .build_ptr(cx))
+    let mut builder = Function::builder();
+    builder.arity(0);
+    builder.instruction(opcode::INT, 3);
+    builder.instruction(opcode::INT, 4);
+    builder.instruction(opcode::ADD, 0);
+    builder.instruction(opcode::RETURN, 0);
+    Ok(builder.build_ptr(cx))
 }
