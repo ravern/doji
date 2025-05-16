@@ -3,7 +3,9 @@ use gc_arena::{
     lock::{GcRefLock, RefLock},
 };
 
-use crate::{closure::ClosurePtr, context::Context, function::opcode, value::Value};
+use crate::{
+    closure::ClosurePtr, context::Context, error::EngineError, function::opcode, value::Value,
+};
 
 pub type FiberPtr<'gc> = GcRefLock<'gc, FiberValue<'gc>>;
 
@@ -45,20 +47,22 @@ impl<'gc> FiberValue<'gc> {
                     let b: i64 = self
                         .stack
                         .pop()
-                        .expect("stack underflow")
+                        .ok_or(EngineError::StackUnderflow)
+                        .unwrap()
                         .try_into(cx)
-                        .expect("expected an integer");
+                        .unwrap_or_else(|_| todo!());
                     let a: i64 = self
                         .stack
                         .pop()
-                        .expect("stack underflow")
+                        .ok_or(EngineError::StackUnderflow)
+                        .unwrap()
                         .try_into(cx)
-                        .expect("expected an integer");
+                        .unwrap_or_else(|_| todo!());
                     self.stack.push((a + b).into());
                 }
 
                 opcode::RETURN => {
-                    let value = self.stack.pop().expect("stack underflow");
+                    let value = self.stack.pop().ok_or(EngineError::StackUnderflow).unwrap();
                     return Step::Return(value);
                 }
 

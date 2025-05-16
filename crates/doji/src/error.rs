@@ -52,3 +52,22 @@ impl<'gc> From<ErrorPtr<'gc>> for Error {
         }
     }
 }
+
+#[derive(Debug)]
+pub enum EngineError {
+    InvalidInstructionOffset(usize),
+    NonExistentFiber,
+    StackUnderflow,
+}
+
+impl Display for EngineError {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            EngineError::InvalidInstructionOffset(offset) => {
+                write!(f, "invalid instruction offset: {}", offset)
+            }
+            EngineError::NonExistentFiber => write!(f, "tried to wake a non-existent fiber"),
+            EngineError::StackUnderflow => write!(f, "stack underflow"),
+        }
+    }
+}

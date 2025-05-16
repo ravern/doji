@@ -1,6 +1,6 @@
 use gc_arena::{Collect, Gc};
 
-use crate::{context::Context, string::StringPtr};
+use crate::{context::Context, error::EngineError, string::StringPtr};
 
 pub type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
 
@@ -23,7 +23,11 @@ impl<'gc> Function<'gc> {
     }
 
     pub fn instruction(&self, offset: usize) -> Instruction {
-        *self.code.get(offset).expect("invalid instruction offset")
+        *self
+            .code
+            .get(offset)
+            .ok_or(EngineError::InvalidInstructionOffset(offset))
+            .unwrap()
     }
 }
 

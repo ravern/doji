@@ -10,6 +10,7 @@ use crate::{
     closure::ClosurePtr,
     context::Context,
     driver::Id,
+    error::EngineError,
     fiber::{self, FiberPtr, FiberValue},
     value::Value,
 };
@@ -82,7 +83,8 @@ impl<'gc> State<'gc> {
             .pending_arena
             .borrow_mut(cx.mutation())
             .remove(id)
-            .expect("tried to wake a non-existent fiber");
+            .ok_or(EngineError::NonExistentFiber)
+            .unwrap();
         self.ready_queue.borrow_mut(cx.mutation()).push_back(fiber);
     }
 }
