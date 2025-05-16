@@ -17,7 +17,6 @@ use crate::{
 #[derive(Collect)]
 #[collect(no_drop)]
 pub struct State<'gc> {
-    roots: DynamicRootSet<'gc>,
     root_fiber: GcRefLock<'gc, Option<FiberPtr<'gc>>>,
     ready_queue: GcRefLock<'gc, VecDeque<FiberPtr<'gc>>>,
     pending_arena: GcRefLock<'gc, PendingArena<'gc>>,
@@ -26,7 +25,6 @@ pub struct State<'gc> {
 impl<'gc> State<'gc> {
     pub fn new(mutation: &'gc Mutation<'gc>) -> Self {
         Self {
-            roots: DynamicRootSet::new(mutation),
             root_fiber: Gc::new(mutation, RefLock::default()),
             ready_queue: Gc::new(mutation, RefLock::default()),
             pending_arena: Gc::new(mutation, RefLock::default()),
@@ -52,7 +50,13 @@ impl<'gc> State<'gc> {
         let fiber = match self.ready_queue.borrow_mut(cx.mutation()).pop_front() {
             Some(fiber) => fiber,
             None => {
-                return Step::Park;
+                // TODO: we will just return continue for now, which means this will busy-wait
+                // until we successfully poll the driver for an event. Ideally we design some kind
+                // of non-busy-waiting mechanism.
+                //
+                // Simply parking the thread at this point could cause a concurrency bug where the
+                // unpark is called before the park.
+                return Step::Continue;
             }
         };
 
@@ -84,7 +88,6 @@ impl<'gc> State<'gc> {
 }
 
 pub enum Step<'gc> {
-    Park,
     Continue,
     Yield(Id, Value<'gc>),
     Return(Value<'gc>),
