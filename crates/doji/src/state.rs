@@ -83,7 +83,7 @@ impl<'gc> State<'gc> {
             .pending_arena
             .borrow_mut(cx.mutation())
             .remove(id)
-            .ok_or(EngineError::NonExistentFiber)
+            .ok_or(EngineError::WakeNonExistentFiber)
             .unwrap();
         self.ready_queue.borrow_mut(cx.mutation()).push_back(fiber);
     }

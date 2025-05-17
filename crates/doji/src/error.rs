@@ -56,8 +56,10 @@ impl<'gc> From<ErrorPtr<'gc>> for Error {
 #[derive(Debug)]
 pub enum EngineError {
     InvalidInstructionOffset(usize),
-    NonExistentFiber,
+    InvalidConstantIndex(usize),
+    WakeNonExistentFiber,
     StackUnderflow,
+    CallStackUnderflow,
 }
 
 impl Display for EngineError {
@@ -66,8 +68,12 @@ impl Display for EngineError {
             EngineError::InvalidInstructionOffset(offset) => {
                 write!(f, "invalid instruction offset: {}", offset)
             }
-            EngineError::NonExistentFiber => write!(f, "tried to wake a non-existent fiber"),
+            EngineError::InvalidConstantIndex(index) => {
+                write!(f, "invalid constant index: {}", index)
+            }
+            EngineError::WakeNonExistentFiber => write!(f, "tried to wake a non-existent fiber"),
             EngineError::StackUnderflow => write!(f, "stack underflow"),
+            EngineError::CallStackUnderflow => write!(f, "call stack underflow"),
         }
     }
 }

@@ -1,6 +1,6 @@
 use gc_arena::{Collect, Gc};
 
-use crate::{context::Context, error::EngineError, string::StringPtr};
+use crate::{context::Context, error::EngineError, string::StringPtr, value::Value};
 
 pub type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
 
@@ -22,16 +22,24 @@ impl<'gc> Function<'gc> {
         self.arity
     }
 
+    pub fn constant(&self, index: usize) -> Constant<'gc> {
+        self.constants
+            .get(index)
+            .ok_or_else(|| EngineError::InvalidConstantIndex(index))
+            .unwrap()
+            .clone()
+    }
+
     pub fn instruction(&self, offset: usize) -> Instruction {
         *self
             .code
             .get(offset)
-            .ok_or(EngineError::InvalidInstructionOffset(offset))
+            .ok_or_else(|| EngineError::InvalidInstructionOffset(offset))
             .unwrap()
     }
 }
 
-#[derive(Collect, Debug)]
+#[derive(Clone, Collect, Debug)]
 #[collect(no_drop)]
 pub enum Constant<'gc> {
     Int(i64),
@@ -39,7 +47,17 @@ pub enum Constant<'gc> {
     String(StringPtr<'gc>),
 }
 
-#[derive(Collect, Clone, Copy, Debug)]
+impl<'gc> From<Constant<'gc>> for Value<'gc> {
+    fn from(constant: Constant<'gc>) -> Value<'gc> {
+        match constant {
+            Constant::Int(int) => int.into(),
+            Constant::Float(float) => float.into(),
+            Constant::String(string) => string.into(),
+        }
+    }
+}
+
+#[derive(Clone, Collect, Copy, Debug)]
 #[collect(no_drop)]
 pub struct Instruction(u32);
 
@@ -71,6 +89,7 @@ pub mod opcode {
     pub const SUB: u8 = 0x21;
     pub const MUL: u8 = 0x22;
     pub const DIV: u8 = 0x23;
+    pub const MOD: u8 = 0x24;
 
     pub const RETURN: u8 = 0x30;
 }
