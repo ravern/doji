@@ -41,6 +41,10 @@ impl<'gc> FiberValue<'gc> {
         }
     }
 
+    pub fn push(&mut self, _cx: &Context<'gc>, value: Value<'gc>) {
+        self.stack.push(value);
+    }
+
     fn step_closure(&mut self, cx: &Context<'gc>, closure: ClosurePtr<'gc>) -> Step<'gc> {
         let error = match self.try_step_closure(cx, closure) {
             Ok(step) => return step,

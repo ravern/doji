@@ -95,6 +95,7 @@ impl<'gc> State<'gc> {
             .remove(id)
             .ok_or(EngineError::WakeNonExistentFiber)
             .unwrap();
+        fiber.borrow_mut(cx.mutation()).push(cx, res);
         self.ready_queue.borrow_mut(cx.mutation()).push_back(fiber);
     }
 }
