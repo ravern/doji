@@ -92,6 +92,8 @@ pub mod opcode {
     pub const MOD: u8 = 0x24;
 
     pub const RETURN: u8 = 0x30;
+
+    pub const YIELD: u8 = 0x40;
 }
 
 #[derive(Default)]

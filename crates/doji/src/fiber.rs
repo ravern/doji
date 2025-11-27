@@ -102,6 +102,8 @@ impl<'gc> FiberValue<'gc> {
 
                 opcode::RETURN => return Ok(Step::Return(self.pop())),
 
+                opcode::YIELD => return Ok(Step::Yield(self.pop())),
+
                 _ => unreachable!(),
             }
         }
