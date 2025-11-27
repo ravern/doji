@@ -64,6 +64,9 @@ impl<'gc> State<'gc> {
         // We first insert the fiber into the pending arena to obtain an id for a potential yield.
         let id = self.pending_arena.borrow_mut(cx.mutation()).insert(fiber);
 
+        // We also want to know whether the fiber is the root fiber.
+        let is_root_fiber = Gc::ptr_eq(fiber, self.root_fiber.borrow().unwrap());
+
         // Run one step of the evaluation of the fiber.
         match fiber.borrow_mut(cx.mutation()).step(cx) {
             fiber::Step::Continue => {
@@ -73,7 +76,14 @@ impl<'gc> State<'gc> {
             fiber::Step::Yield(value) => Step::Yield(id, value),
             fiber::Step::Return(value) => {
                 self.pending_arena.borrow_mut(cx.mutation()).remove(id);
-                Step::Return(value)
+
+                // If the root fiber returns, we're done with this evaluation, otherwise continue.
+                if is_root_fiber {
+                    // TODO: print a warning if not all fibers have returned before the root fiber.
+                    Step::Return(value)
+                } else {
+                    Step::Continue
+                }
             }
         }
     }

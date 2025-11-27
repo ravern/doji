@@ -37,8 +37,8 @@ impl Engine {
         })?;
 
         loop {
-            // Run one step of the evaluation on the state, and return a non-None value if the
-            // evaluation is complete.
+            // Run one step of the evaluation on the state. Return Some value if the evaluation is
+            // complete, which represents the return value of the evaluation.
             let ret_value = self.enter::<Result<_, Error>>(|cx| match cx.state().step(cx) {
                 Step::Continue => Ok(None),
                 Step::Yield(id, op) => {
