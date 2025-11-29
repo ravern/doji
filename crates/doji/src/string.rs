@@ -1,4 +1,4 @@
-use std::fmt::{self, Display, Formatter};
+use core::fmt::{self, Display, Formatter};
 
 use gc_arena::{Collect, Gc};
 

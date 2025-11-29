@@ -1,5 +1,3 @@
-use std::thread::current;
-
 use gc_arena::{
     Collect, Gc,
     lock::{GcRefLock, RefLock},
@@ -79,6 +77,8 @@ impl<'gc> FiberValue<'gc> {
         loop {
             let instruction = closure.function().instruction(self.current_frame.pc);
             self.current_frame.pc += 1;
+
+            println!("stepping {}", instruction);
 
             match instruction.opcode() {
                 opcode::NO_OP => {}

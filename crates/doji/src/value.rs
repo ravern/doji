@@ -1,6 +1,6 @@
-use std::fmt::{self, Display, Formatter};
+use core::fmt::{self, Display, Formatter};
 
-use gc_arena::{Collect, DynamicRoot, Gc, Rootable};
+use gc_arena::Collect;
 
 use crate::{
     closure::ClosurePtr,

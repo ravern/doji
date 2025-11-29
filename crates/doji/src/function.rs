@@ -1,8 +1,12 @@
+use core::fmt::{self, Display, Formatter};
+
 use gc_arena::{Collect, Gc};
 
 use crate::{context::Context, error::EngineError, string::StringPtr, value::Value};
 
 pub type FunctionPtr<'gc> = Gc<'gc, Function<'gc>>;
+
+pub const NO_OPERAND: u32 = 0;
 
 #[derive(Collect, Debug)]
 #[collect(no_drop)]
@@ -73,6 +77,27 @@ impl Instruction {
 
     pub fn operand(&self) -> u32 {
         self.0 >> 8
+    }
+}
+
+impl Display for Instruction {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
+        match self.opcode() {
+            opcode::NO_OP => write!(f, "NO_OP"),
+            opcode::NIL => write!(f, "NIL"),
+            opcode::TRUE => write!(f, "TRUE"),
+            opcode::FALSE => write!(f, "FALSE"),
+            opcode::INT => write!(f, "INT {}", self.operand()),
+            opcode::CONST => write!(f, "CONST {}", self.operand()),
+            opcode::ADD => write!(f, "ADD"),
+            opcode::SUB => write!(f, "SUB"),
+            opcode::MUL => write!(f, "MUL"),
+            opcode::DIV => write!(f, "DIV"),
+            opcode::MOD => write!(f, "MOD"),
+            opcode::RETURN => write!(f, "RETURN"),
+            opcode::YIELD => write!(f, "YIELD"),
+            _ => write!(f, "UNKNOWN"),
+        }
     }
 }
 

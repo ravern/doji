@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 
 use gc_arena::{
-    Collect, DynamicRootSet, Gc, Mutation,
+    Collect, Gc, Mutation,
     lock::{GcRefLock, RefLock},
 };
 use generational_arena::Arena as GenArena;
@@ -116,6 +116,10 @@ impl<'gc> PendingArena<'gc> {
 
     fn remove(&mut self, id: Id) -> Option<FiberPtr<'gc>> {
         self.0.remove(id.into())
+    }
+
+    fn len(&self) -> usize {
+        self.0.len()
     }
 
     fn is_empty(&self) -> bool {
