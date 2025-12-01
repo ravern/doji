@@ -67,6 +67,8 @@ impl<'gc> State<'gc> {
         // We also want to know whether the fiber is the root fiber.
         let is_root_fiber = Gc::ptr_eq(fiber, self.root_fiber.borrow().unwrap());
 
+        dbg!(is_root_fiber);
+
         // Run one step of the evaluation of the fiber.
         match fiber.borrow_mut(cx.mutation()).step(cx) {
             fiber::Step::Continue => {

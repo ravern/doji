@@ -6,6 +6,7 @@ use crate::{
     closure::ClosurePtr,
     context::Context,
     error::{ErrorPtr, ErrorValue},
+    fiber::FiberPtr,
     string::{StringPtr, StringValue},
 };
 
@@ -17,6 +18,7 @@ pub enum ValueType {
     Float,
     String,
     Closure,
+    Fiber,
     Error,
 }
 
@@ -29,6 +31,7 @@ impl Display for ValueType {
             Self::Float => write!(f, "float"),
             Self::String => write!(f, "string"),
             Self::Closure => write!(f, "closure"),
+            Self::Fiber => write!(f, "fiber"),
             Self::Error => write!(f, "error"),
         }
     }
@@ -47,6 +50,7 @@ enum ValueInner<'gc> {
     Float(f64),
     String(StringPtr<'gc>),
     Closure(ClosurePtr<'gc>),
+    Fiber(FiberPtr<'gc>),
     Error(ErrorPtr<'gc>),
 }
 
@@ -63,6 +67,7 @@ impl<'gc> Value<'gc> {
             ValueInner::Float(_) => ValueType::Float,
             ValueInner::String(_) => ValueType::String,
             ValueInner::Closure(_) => ValueType::Closure,
+            ValueInner::Fiber(_) => ValueType::Fiber,
             ValueInner::Error(_) => ValueType::Error,
         }
     }
@@ -96,6 +101,7 @@ impl_from_for_value!(i64, Int);
 impl_from_for_value!(f64, Float);
 impl_from_for_value!(StringPtr<'gc>, String);
 impl_from_for_value!(ClosurePtr<'gc>, Closure);
+impl_from_for_value!(FiberPtr<'gc>, Fiber);
 impl_from_for_value!(ErrorPtr<'gc>, Error);
 
 pub trait TryFromValue<'gc>: Sized {
@@ -125,6 +131,9 @@ macro_rules! impl_try_from_value {
 impl_try_from_value!(bool, Bool, ValueType::Bool);
 impl_try_from_value!(i64, Int, ValueType::Int);
 impl_try_from_value!(f64, Float, ValueType::Float);
+impl_try_from_value!(ClosurePtr<'gc>, Closure, ValueType::Closure);
+impl_try_from_value!(FiberPtr<'gc>, Fiber, ValueType::Fiber);
+impl_try_from_value!(ErrorPtr<'gc>, Error, ValueType::Error);
 
 pub trait IntoValue<'gc>: Sized {
     fn into_value(self, cx: &Context<'gc>) -> Value<'gc>;

@@ -13,6 +13,7 @@ pub const NO_OPERAND: u32 = 0;
 pub struct Function<'gc> {
     name: Option<StringPtr<'gc>>,
     arity: usize,
+    functions: Box<[FunctionPtr<'gc>]>,
     constants: Box<[Constant<'gc>]>,
     code: Box<[Instruction]>,
 }
@@ -24,6 +25,14 @@ impl<'gc> Function<'gc> {
 
     pub fn arity(&self) -> usize {
         self.arity
+    }
+
+    pub fn function(&self, index: usize) -> FunctionPtr<'gc> {
+        self.functions
+            .get(index)
+            .ok_or_else(|| EngineError::InvalidFunctionIndex(index))
+            .unwrap()
+            .clone()
     }
 
     pub fn constant(&self, index: usize) -> Constant<'gc> {
@@ -89,12 +98,14 @@ impl Display for Instruction {
             opcode::FALSE => write!(f, "FALSE"),
             opcode::INT => write!(f, "INT {}", self.operand()),
             opcode::CONST => write!(f, "CONST {}", self.operand()),
+            opcode::CLOSURE => write!(f, "CLOSURE {}", self.operand()),
             opcode::ADD => write!(f, "ADD"),
             opcode::SUB => write!(f, "SUB"),
             opcode::MUL => write!(f, "MUL"),
             opcode::DIV => write!(f, "DIV"),
             opcode::MOD => write!(f, "MOD"),
             opcode::RETURN => write!(f, "RETURN"),
+            opcode::SPAWN => write!(f, "SPAWN"),
             opcode::YIELD => write!(f, "YIELD"),
             _ => write!(f, "UNKNOWN"),
         }
@@ -109,6 +120,7 @@ pub mod opcode {
     pub const FALSE: u8 = 0x12;
     pub const INT: u8 = 0x13;
     pub const CONST: u8 = 0x14;
+    pub const CLOSURE: u8 = 0x15;
 
     pub const ADD: u8 = 0x20;
     pub const SUB: u8 = 0x21;
@@ -118,13 +130,15 @@ pub mod opcode {
 
     pub const RETURN: u8 = 0x30;
 
-    pub const YIELD: u8 = 0x40;
+    pub const SPAWN: u8 = 0x40;
+    pub const YIELD: u8 = 0x41;
 }
 
 #[derive(Default)]
 pub struct FunctionBuilder<'gc> {
     name: Option<StringPtr<'gc>>,
     arity: Option<usize>,
+    functions: Vec<FunctionPtr<'gc>>,
     constants: Vec<Constant<'gc>>,
     code: Vec<Instruction>,
 }
@@ -137,6 +151,11 @@ impl<'gc> FunctionBuilder<'gc> {
 
     pub fn arity(&mut self, arity: usize) {
         self.arity = Some(arity);
+    }
+
+    pub fn function(&mut self, function: FunctionPtr<'gc>) -> usize {
+        self.functions.push(function);
+        self.functions.len() - 1
     }
 
     pub fn constant(&mut self, constant: Constant<'gc>) -> usize {
@@ -153,6 +172,7 @@ impl<'gc> FunctionBuilder<'gc> {
         Function {
             name: self.name,
             arity: self.arity.expect("arity is required"),
+            functions: self.functions.into_boxed_slice(),
             constants: self.constants.into_boxed_slice(),
             code: self.code.into_boxed_slice(),
         }

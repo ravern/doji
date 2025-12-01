@@ -56,6 +56,7 @@ impl<'gc> From<ErrorPtr<'gc>> for Error {
 #[derive(Debug)]
 pub enum EngineError {
     InvalidInstructionOffset(usize),
+    InvalidFunctionIndex(usize),
     InvalidConstantIndex(usize),
     WakeNonExistentFiber,
     StackUnderflow,
@@ -67,6 +68,9 @@ impl Display for EngineError {
         match self {
             EngineError::InvalidInstructionOffset(offset) => {
                 write!(f, "invalid instruction offset: {}", offset)
+            }
+            EngineError::InvalidFunctionIndex(index) => {
+                write!(f, "invalid function index: {}", index)
             }
             EngineError::InvalidConstantIndex(index) => {
                 write!(f, "invalid constant index: {}", index)

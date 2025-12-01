@@ -4,7 +4,7 @@ use gc_arena::{
 };
 
 use crate::{
-    closure::ClosurePtr,
+    closure::{ClosurePtr, ClosureValue},
     context::Context,
     error::{EngineError, ErrorPtr},
     function::opcode,
@@ -78,8 +78,6 @@ impl<'gc> FiberValue<'gc> {
             let instruction = closure.function().instruction(self.current_frame.pc);
             self.current_frame.pc += 1;
 
-            println!("stepping {}", instruction);
-
             match instruction.opcode() {
                 opcode::NO_OP => {}
 
@@ -93,6 +91,11 @@ impl<'gc> FiberValue<'gc> {
                         .constant(instruction.operand() as usize)
                         .into(),
                 ),
+                opcode::CLOSURE => {
+                    let function = closure.function().function(instruction.operand() as usize);
+                    let closure = ClosureValue::new_ptr(cx, function);
+                    self.stack.push(closure.into());
+                }
 
                 opcode::ADD => self.try_int_or_float_op(cx, |a, b| a + b, |a, b| a + b)?,
                 opcode::SUB => self.try_int_or_float_op(cx, |a, b| a - b, |a, b| a - b)?,
@@ -102,6 +105,11 @@ impl<'gc> FiberValue<'gc> {
 
                 opcode::RETURN => return Ok(Step::Return(self.pop())),
 
+                opcode::SPAWN => {
+                    let closure = self.pop().try_into(cx)?;
+                    let fiber = cx.state().spawn(cx, closure);
+                    self.stack.push(fiber.clone().into());
+                }
                 opcode::YIELD => return Ok(Step::Yield(self.pop())),
 
                 _ => unreachable!(),

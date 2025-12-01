@@ -41,7 +41,7 @@ impl Driver {
     }
 }
 
-#[derive(Clone, Copy, Eq, Hash, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub struct Id(Index);
 
 impl From<Index> for Id {
